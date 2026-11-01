@@ -16,15 +16,15 @@
 
 ## Плагіни (маркетплейс `claude-plugins-official`, Anthropic)
 
-| Плагін | Навіщо | Примітка |
-|---|---|---|
-| `typescript-lsp` | Діагностика типів і навігація по TS | Потрібен `typescript-language-server` у PATH: `npm i -g typescript typescript-language-server` (ще не встановлено) |
-| `context7` | Актуальна документація Phaser / Vite / Capacitor | MCP на `mcp.context7.com` (Upstash): запити про бібліотеки йдуть на їхній сервер. Код проєкту туди не надсилається, лише запити |
-| `playwright` | Смоук-тести в браузері, огляд гри очима агента | Запускає `npx @playwright/mcp@latest` (Microsoft) |
-| `commit-commands` | `/commit`, `/commit-push-pr` | |
-| `pr-review-toolkit` | Рев'ю коду, тестів, типів, тихих помилок | |
-| `code-simplifier` | Рефакторинг/спрощення | |
-| `feature-dev` | `/feature-dev`: дослідження → архітектура → реалізація | |
+| Плагін              | Навіщо                                                 | Примітка                                                                                                                        |
+| ------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `typescript-lsp`    | Діагностика типів і навігація по TS                    | Потрібен `typescript-language-server` у PATH: `npm i -g typescript typescript-language-server` (ще не встановлено)              |
+| `context7`          | Актуальна документація Phaser / Vite / Capacitor       | MCP на `mcp.context7.com` (Upstash): запити про бібліотеки йдуть на їхній сервер. Код проєкту туди не надсилається, лише запити |
+| `playwright`        | Смоук-тести в браузері, огляд гри очима агента         | Запускає `npx @playwright/mcp@latest` (Microsoft)                                                                               |
+| `commit-commands`   | `/commit`, `/commit-push-pr`                           |                                                                                                                                 |
+| `pr-review-toolkit` | Рев'ю коду, тестів, типів, тихих помилок               |                                                                                                                                 |
+| `code-simplifier`   | Рефакторинг/спрощення                                  |                                                                                                                                 |
+| `feature-dev`       | `/feature-dev`: дослідження → архітектура → реалізація |                                                                                                                                 |
 
 ## Скіли
 
@@ -44,12 +44,12 @@
 
 ### Геймдев — [gamedev-skills/awesome-gamedev-agent-skills](https://github.com/gamedev-skills/awesome-gamedev-agent-skills) (Apache-2.0, ~6.4k ★, коміт `19d93f9`)
 
-| Скіл | Навіщо |
-|---|---|
-| `game-feel` | Juice: тряска камери, hit-stop, squash & stretch — для вибухів і влучань |
-| `physics-tuning` | Фіксований крок, інтерполяція рендеру, тунелювання снарядів |
-| `performance-optimization` | Профілювання, пули, бюджет кадру (ціль — 60 FPS на Android) |
-| `game-ui-ux` | HUD, safe area на телефонах, стек екранів, HUD через події |
+| Скіл                       | Навіщо                                                                   |
+| -------------------------- | ------------------------------------------------------------------------ |
+| `game-feel`                | Juice: тряска камери, hit-stop, squash & stretch — для вибухів і влучань |
+| `physics-tuning`           | Фіксований крок, інтерполяція рендеру, тунелювання снарядів              |
+| `performance-optimization` | Профілювання, пули, бюджет кадру (ціль — 60 FPS на Android)              |
+| `game-ui-ux`               | HUD, safe area на телефонах, стек екранів, HUD через події               |
 
 Приклади коду в них переважно на Godot/Unity, але принципи загальні. Не взяли: роутер (тягне
 скіли інших рушіїв), `phaser-core` і `camera-systems` (дублюють офіційні Phaser-скіли),
@@ -57,24 +57,25 @@
 
 ### Vite / Vitest — [antfu/skills](https://github.com/antfu/skills) (MIT, ~6k ★, коміт `7de210b`)
 
-| Скіл | Навіщо |
-|---|---|
-| `vite` | Конфіг Vite 8 (Rolldown), плагіни |
+| Скіл     | Навіщо                                           |
+| -------- | ------------------------------------------------ |
+| `vite`   | Конфіг Vite 8 (Rolldown), плагіни                |
 | `vitest` | Тести core-логіки: API, моки, coverage, фікстури |
 
 Згенеровані з офіційної документації Vite/Vitest.
 
 ### Процес — [obra/superpowers](https://github.com/obra/superpowers) (MIT, ~310k ★, коміт `2ce8aa1`)
 
-| Скіл | Навіщо |
-|---|---|
-| `test-driven-development` | TDD для core-механік (правило «кожна механіка з тестами») |
-| `systematic-debugging` | Пошук першопричини замість латок |
-| `verification-before-completion` | Не казати «готово» без запущених тестів/збірки |
-| `receiving-code-review` | Як обробляти зауваження рев'ю |
-| `brainstorming` | Обговорення механік і дизайну перед кодом |
+| Скіл                             | Навіщо                                                    |
+| -------------------------------- | --------------------------------------------------------- |
+| `test-driven-development`        | TDD для core-механік (правило «кожна механіка з тестами») |
+| `systematic-debugging`           | Пошук першопричини замість латок                          |
+| `verification-before-completion` | Не казати «готово» без запущених тестів/збірки            |
+| `receiving-code-review`          | Як обробляти зауваження рев'ю                             |
+| `brainstorming`                  | Обговорення механік і дизайну перед кодом                 |
 
 **Змінено проти оригіналу:**
+
 - `brainstorming`: видалено `scripts/` і `visual-companion.md`. Локальний сервер компаньйона
   вставляє на сторінку логотип з `primeradiant.com` (сторонній сервер, телеметрія) — це суперечить
   правилам `CLAUDE.md`. Розділи про компаньйон прибрано з `SKILL.md`; перехід після дизайну веде
