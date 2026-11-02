@@ -7,6 +7,7 @@
 
 import { nextFloat, seedRng, type RngState } from '../rng';
 import { WORLD_HEIGHT, WORLD_WIDTH } from '../world';
+import { stampMushroom, type Mushroom } from './decor';
 import type { TerrainLayout } from './layout';
 import { createMask, fillBelow } from './mask';
 
@@ -22,6 +23,14 @@ export const HILLS_LIMITS = {
   /** Width of the smooth ramp from a pad back into the hills. */
   spawnRampWidth: 50,
 } as const;
+
+/** Fluffy moss edge: round bumps cut into the top of the ground (art spec: Ø ~12 every ~16 px). */
+export const MOSS_FUZZ = { radius: 6, spacing: 16 } as const;
+
+/** Mushrooms: one candidate slot per this many px; chance to fill it; keep-out around spawns. */
+const MUSHROOM_SLOT = 170;
+const MUSHROOM_CHANCE = 0.45;
+const MUSHROOM_SPAWN_CLEARANCE = 90;
 
 /** Average surface height as a fraction of world height. */
 const BASE_LEVEL = 0.58;
@@ -106,9 +115,48 @@ export function generateHills(
   for (const { x } of spawns) flattenPad(surface, x);
 
   const columns = new Int32Array(width);
-  for (let x = 0; x < width; x++) columns[x] = Math.floor(surface[x] ?? lowest);
+  for (let x = 0; x < width; x++) {
+    columns[x] = Math.floor(surface[x] ?? lowest) + mossFuzzDepth(x);
+  }
 
   const mask = createMask(width, height);
   fillBelow(mask, columns);
-  return { mask, waterLevel, spawns };
+
+  const decor = placeMushrooms(columns, spawns, rng);
+  for (const m of decor) stampMushroom(mask, m);
+
+  return { mask, waterLevel, spawns, decor };
+}
+
+/** How far the moss edge is pushed down at column x: 0 at a bump's center, `radius` between bumps. */
+function mossFuzzDepth(x: number): number {
+  const { radius, spacing } = MOSS_FUZZ;
+  const dx = (x % spacing) + 0.5 - spacing / 2;
+  const d2 = radius * radius - dx * dx;
+  return d2 <= 0 ? radius : Math.floor(radius - Math.sqrt(d2));
+}
+
+function placeMushrooms(
+  columns: Int32Array,
+  spawns: readonly { x: number }[],
+  rng: RngState,
+): Mushroom[] {
+  const out: Mushroom[] = [];
+  let state = rng;
+  for (let slot = MUSHROOM_SLOT / 2; slot < columns.length - 20; slot += MUSHROOM_SLOT) {
+    const roll = nextFloat(state);
+    const jitter = nextFloat(roll.state);
+    state = jitter.state;
+    if (roll.value >= MUSHROOM_CHANCE) continue;
+
+    const x = Math.floor(slot + (jitter.value - 0.5) * (MUSHROOM_SLOT / 2));
+    if (x < 20 || x >= columns.length - 20) continue;
+    if (spawns.some((s) => Math.abs(s.x - x) <= MUSHROOM_SPAWN_CLEARANCE)) continue;
+
+    // Sink the stem to the deepest ground under it so it never floats over a moss gap.
+    let ground = 0;
+    for (let dx = -3; dx <= 3; dx++) ground = Math.max(ground, columns[x + dx] ?? 0);
+    out.push({ kind: 'mushroom', x, y: ground + 1 });
+  }
+  return out;
 }

@@ -1,3 +1,4 @@
+import type { Decor } from './decor';
 import type { TerrainMask } from './mask';
 
 export interface SpawnPoint {
@@ -11,4 +12,6 @@ export interface TerrainLayout {
   /** Y of the water surface; anything at or below it drowns. */
   readonly waterLevel: number;
   readonly spawns: readonly SpawnPoint[];
+  /** Solid surface decor (already stamped into the mask), for the renderer to paint. */
+  readonly decor: readonly Decor[];
 }
