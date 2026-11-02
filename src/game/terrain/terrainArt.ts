@@ -39,6 +39,10 @@ const HIGHLIGHT = mossBand(0);
 const MAIN = mossBand(1);
 const UNDER = mossBand(2);
 const FUZZ_RGB = hexToRgb(C.moss.fuzz);
+const CAP = T.mossCap;
+const GLINT_RGB = hexToRgb(CAP.glint.color);
+const SPECK_RGB = hexToRgb(CAP.speck.color);
+const DRIP_RGB = hexToRgb(CAP.drip.color);
 const WARM_RGB = hexToRgb(C.moss.warm);
 const COOL_RGB = hexToRgb(C.moss.cool);
 const BURN_RGB = hexToRgb(C.crater.burn);
@@ -91,18 +95,43 @@ function varyMoss(rgb: Rgb, v: number): Rgb {
 }
 
 /**
- * Soil from the tile (art px), using one of its 8 flips/rotations per tile-sized block so the
- * grid disappears without cutting details at block seams (the tile keeps details off its edges).
+ * Soil from the seamless tile (art px), plainly repeated: its clods are lit from the top left,
+ * so flips or rotations would break the lighting.
  */
 function soilTexel(tile: SoilTile, x: number, y: number): number {
   const n = tile.size;
-  const variant = Math.floor(hash2(Math.floor(x / n), Math.floor(y / n) + 7919) * 8);
-  let u = x % n;
-  let v = y % n;
-  if (variant & 1) u = n - 1 - u;
-  if (variant & 2) v = n - 1 - v;
-  if (variant & 4) [u, v] = [v, u];
-  return (v * n + u) * 4;
+  return ((y % n) * n + (x % n)) * 4;
+}
+
+/** True if x (world px) falls on an "on" segment of a dash pattern [on, off, on, off, ...]. */
+function onDash(x: number, dashes: readonly number[]): boolean {
+  const period = dashes.reduce((a, b) => a + b, 0);
+  let at = ((x % period) + period) % period;
+  for (let i = 0; i < dashes.length; i++) {
+    const len = dashes[i] ?? 0;
+    if (at < len) return i % 2 === 0;
+    at -= len;
+  }
+  return false;
+}
+
+/** A blob of moss hanging below the cap: half an ellipse downward from `top` (world px). */
+interface Drip {
+  readonly x: number;
+  readonly top: number;
+  readonly halfWidth: number;
+  readonly length: number;
+}
+
+/** 1 inside the drip, 2 on its contour ring, 0 outside. */
+function dripAt(d: Drip, wx: number, wy: number): 0 | 1 | 2 {
+  if (wy < d.top) return 0;
+  const dx = wx - d.x;
+  const dy = wy - d.top;
+  const inner = (dx / d.halfWidth) ** 2 + (dy / d.length) ** 2;
+  if (inner <= 1) return 1;
+  const outer = (dx / (d.halfWidth + OUTLINE)) ** 2 + (dy / (d.length + OUTLINE)) ** 2;
+  return outer <= 1 ? 2 : 0;
 }
 
 /** 1 for every mask pixel that belongs to decor rather than ground. */
@@ -146,6 +175,30 @@ export function paintGardenArt(layout: TerrainLayout, tile: SoilTile): Rgba {
     return ((prefix[b] ?? 0) - (prefix[a] ?? 0)) / (b - a);
   };
 
+  const stretchAt = new Float64Array(width);
+  for (let x = 0; x < width; x++) {
+    const slope = (smooth(Math.min(width - 1, x + 6)) - smooth(Math.max(0, x - 6))) / 12;
+    stretchAt[x] = Math.min(T.mossBandMaxStretch, Math.sqrt(1 + slope * slope));
+  }
+
+  // Drips hang where the cap is fairly flat, from the bottom of the main moss band.
+  const drips: Drip[] = [];
+  const D = CAP.drip;
+  for (let x = D.spacingMin * hash2(width, 3); x < width;) {
+    const cx = Math.floor(x);
+    const slope = Math.abs(smooth(Math.min(width - 1, cx + 6)) - smooth(Math.max(0, cx - 6))) / 12;
+    if (slope <= D.maxSlope && (top[cx] ?? height) < height) {
+      const stretch = stretchAt[cx] ?? 1;
+      drips.push({
+        x,
+        top: (base[cx] ?? height) + OUTLINE + MAIN.to * stretch - HIGHLIGHT.to,
+        halfWidth: D.halfWidthMin + (D.halfWidthMax - D.halfWidthMin) * hash2(cx, 11),
+        length: D.lengthMin + (D.lengthMax - D.lengthMin) * hash2(cx, 17),
+      });
+    }
+    x += D.spacingMin + (D.spacingMax - D.spacingMin) * hash2(cx, 5);
+  }
+
   const soilShadeRange = 1 - T.depthDarkenMin;
   const grainAmount = T.soilGrain;
 
@@ -167,14 +220,24 @@ export function paintGardenArt(layout: TerrainLayout, tile: SoilTile): Rgba {
     const colTop = top[x] ?? height;
     const surfTop = surfaceAt(top, u);
     const baseline = surfaceAt(base, u);
-    const slope = (smooth(Math.min(width - 1, x + 6)) - smooth(Math.max(0, x - 6))) / 12;
-    const stretch = Math.min(T.mossBandMaxStretch, Math.sqrt(1 + slope * slope));
+    const stretch = stretchAt[x] ?? 1;
     const highlightEnd = HIGHLIGHT.to * stretch;
     const mainEnd = MAIN.to * stretch;
     const underEnd = UNDER.to * stretch;
     const variation = mossVariation(x);
     const bump = owner[x] ?? -1;
     const bumpJitter = 1 + (hash2(bump, 31) * 2 - 1) * T.mossFuzz.colorJitter;
+    const wx = (u + 0.5) / ART_SCALE;
+    const glint = onDash(wx, CAP.glint.dashes);
+    const glintFrom = CAP.glint.from * stretch;
+    const glintTo = CAP.glint.to * stretch;
+    // Nearest speck center along x (pattern of dot positions, period = sum of spacings).
+    const [s0, s1] = CAP.speck.spacing;
+    const period = (s0 ?? 0) + (s1 ?? 0);
+    const phase = ((wx % period) + period) % period;
+    const speckDx = Math.min(phase, Math.abs(phase - (s0 ?? 0)), period - phase);
+    const speckY = CAP.speck.depth * stretch;
+    const near = drips.filter((d) => Math.abs(wx - d.x) <= d.halfWidth + OUTLINE);
 
     for (let v = colTop * ART_SCALE; v < height * ART_SCALE; v++) {
       const y = Math.floor(v / ART_SCALE);
@@ -183,14 +246,29 @@ export function paintGardenArt(layout: TerrainLayout, tile: SoilTile): Rgba {
       const fromTop = wy - surfTop;
       const fromBase = wy - baseline;
       const o = (v * artWidth + u) * 4;
-      if (fromTop < highlightEnd) {
+      const inMain = fromBase >= 0 && fromBase < mainEnd - HIGHLIGHT.to;
+      const drip =
+        fromBase < mainEnd - HIGHLIGHT.to
+          ? 0
+          : near.reduce<0 | 1 | 2>(
+              (best, d) =>
+                best === 1 ? 1 : (Math.max(best, dripAt(d, wx, wy + OUTLINE)) as 0 | 1 | 2),
+              0,
+            );
+      if (glint && fromTop >= glintFrom && fromTop < glintTo) {
+        put(out, o, varyMoss(GLINT_RGB, variation));
+      } else if (fromTop < highlightEnd) {
         put(out, o, varyMoss(HIGHLIGHT.rgb, variation)); // crisp: no grain
       } else if (fromBase < 0) {
         put(out, o, varyMoss(FUZZ_RGB, variation), bumpJitter);
-      } else if (fromBase < mainEnd - HIGHLIGHT.to) {
-        put(out, o, varyMoss(MAIN.rgb, variation), 0.97 + hash2(u, v) * 0.06);
-      } else if (fromBase < underEnd - HIGHLIGHT.to) {
-        put(out, o, UNDER.rgb); // crisp shadow line between moss and soil
+      } else if (inMain && speckDx ** 2 + (fromTop - speckY) ** 2 <= CAP.speck.radius ** 2) {
+        put(out, o, varyMoss(SPECK_RGB, variation));
+      } else if (inMain) {
+        put(out, o, varyMoss(MAIN.rgb, variation)); // flat, like drawn maps
+      } else if (drip === 1) {
+        put(out, o, varyMoss(DRIP_RGB, variation));
+      } else if (drip === 2 || fromBase < underEnd - HIGHLIGHT.to) {
+        put(out, o, UNDER.rgb); // crisp dark line between moss and soil, and around drips
       } else {
         const t = soilTexel(tile, u, v);
         const depth = Math.max(0, fromBase);
