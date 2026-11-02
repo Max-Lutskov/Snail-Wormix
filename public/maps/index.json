@@ -11,7 +11,7 @@
   },
   {
     "id": "garden",
-    "back": true,
+    "back": false,
     "grass": true
   },
   {
