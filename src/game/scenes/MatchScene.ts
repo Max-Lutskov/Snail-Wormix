@@ -40,7 +40,7 @@ import { paintHillsGrass } from '../terrain/grassArt';
 import { GrassView } from '../terrain/GrassView';
 import { TerrainView } from '../terrain/TerrainView';
 import { preloadShots, ShotView } from '../snail/ShotView';
-import { preloadSnail, SnailView, teamColor } from '../snail/SnailView';
+import { preloadSnail, SnailView, teamColor, type Mood } from '../snail/SnailView';
 import {
   DEBUG_INFO,
   HUD_HIDE,
@@ -126,6 +126,9 @@ export class MatchScene extends Phaser.Scene {
   private overview = false;
   /** When the debug line last refreshed (ms), so online stats update about once a second. */
   private infoAt = 0;
+  /** Emotions that last a moment after an event, by snail id: until when (scene time, ms). */
+  private joyUntil = new Map<number, number>();
+  private angryUntil = new Map<number, number>();
   /** The start menu (mode, then map); the map behind it stays still. */
   private menu!: Menu;
 
@@ -271,6 +274,7 @@ export class MatchScene extends Phaser.Scene {
       this.snailViews[i]?.update(s, this.layout.mask, time, {
         active: i === this.match.active && this.match.phase !== 'over',
         aim: i === this.match.active && aim ? aim.angle : null,
+        mood: this.moodOf(i, aim !== null, time),
       }),
     );
     this.slingshot.draw(this.match.snails[this.match.active], this.match.weapon, this.shotWorld());
@@ -439,14 +443,45 @@ export class MatchScene extends Phaser.Scene {
       case 'damage': {
         const s = this.match.snails.find((x) => x.id === e.snail);
         if (s) this.popup(s.x, s.y - SNAIL.height - 30, `-${e.amount}`);
+        const now = this.time.now;
+        this.snailViews[this.match.snails.findIndex((x) => x.id === e.snail)]?.hurt();
+        this.angryUntil.set(e.snail, now + 4500);
+        // The shooter (the snail whose turn it is) is pleased to have hit someone else.
+        const shooter = this.match.snails[this.match.active];
+        if (shooter && shooter.id !== e.snail) this.joyUntil.set(shooter.id, now + 2500);
         break;
       }
+      case 'fire':
+        this.snailViews[this.match.snails.findIndex((x) => x.id === e.snail)]?.fired();
+        break;
       case 'turn':
         this.glideFrom = this.cameras.main.midPoint.clone();
         break;
       default:
         break;
     }
+  }
+
+  /**
+   * How snail `i` feels now (the emotions sheet): winning or losing, aiming, a shot flying at
+   * it (shock, or panic when low on health), pleased after a hit, angry after being hit,
+   * sly while retreating after its shot, sad when low on health; calm otherwise.
+   */
+  private moodOf(i: number, aiming: boolean, time: number): Mood {
+    const m = this.match;
+    const s = m.snails[i];
+    if (!s) return 'idle';
+    if (m.phase === 'over') return m.winner === s.team ? 'win' : 'sad';
+    if (i === m.active && aiming) return 'aim';
+    const p = m.projectile;
+    if (p && p.owner !== s.id && Math.hypot(p.x - s.x, p.y - (s.y - SNAIL.height / 2)) < 260) {
+      return s.hp <= 35 ? 'panic' : 'shock';
+    }
+    if ((this.joyUntil.get(s.id) ?? 0) > time) return 'joy';
+    if ((this.angryUntil.get(s.id) ?? 0) > time) return 'angry';
+    if (i === m.active && m.phase === 'retreat') return 'sly';
+    if (s.hp <= 30) return 'sad';
+    return 'idle';
   }
 
   /** A small soil puff where a drill bores. */
