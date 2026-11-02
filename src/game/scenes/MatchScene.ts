@@ -122,6 +122,8 @@ export class MatchScene extends Phaser.Scene {
   private resyncing = false;
   /** Zoomed out to show the whole map (HUD button or Z). */
   private overview = false;
+  /** When the debug line last refreshed (ms), so online stats update about once a second. */
+  private infoAt = 0;
 
   constructor() {
     super('MatchScene');
@@ -263,6 +265,10 @@ export class MatchScene extends Phaser.Scene {
     this.follow();
     this.water.update(time);
     this.publishHud();
+    if (this.online && time - this.infoAt > 1000) {
+      this.infoAt = time;
+      this.updateInfo();
+    }
   }
 
   private stepLocal(delta: number, move: MatchInput['move']): void {
@@ -642,13 +648,22 @@ export class MatchScene extends Phaser.Scene {
     this.water.setLevel(this.layout.waterLevel);
   }
 
+  /** Online diagnostics for the debug line: ping, ticks behind the server, resyncs, fps. */
+  private netInfo(): string {
+    const o = this.online;
+    if (!o) return '';
+    const ping = o.pingMs === null ? '?' : `${o.pingMs} ms`;
+    const fps = Math.round(this.game.loop.actualFps);
+    return ` · ping ${ping} · behind ${o.upTo - this.netTick} ticks · states ${o.states} · ${fps} fps`;
+  }
+
   private updateInfo(): void {
     const { source, craters } = this.match.terrain;
     const hash = checksum(this.layout.mask).toString(16).padStart(8, '0');
     const where = source.kind === 'hills' ? `hills ${source.seed}` : `map ${source.id}`;
     this.registry.set(
       DEBUG_INFO,
-      `${where} · craters ${craters.length} · mask ${hash}\n` +
+      `${where} · craters ${craters.length} · mask ${hash}${this.netInfo()}\n` +
         'A/D: crawl · W/space: jump · drag+release: shoot · 1/2/3: weapon · H: hide · R: hills · M: map',
     );
   }

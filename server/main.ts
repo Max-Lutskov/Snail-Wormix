@@ -82,7 +82,9 @@ wss.on('connection', (ws: WebSocket) => {
   ws.on('message', (data) => {
     const msg = parse(data);
     if (!msg) return;
-    if (msg.t === 'create' && !room) {
+    if (msg.t === 'ping') {
+      if (typeof msg.at === 'number') peer.send({ t: 'pong', at: msg.at });
+    } else if (msg.t === 'create' && !room) {
       const code = newCode();
       room = new Room(code, maps, () => randomInt(2 ** 31));
       rooms.set(code, { room, emptySince: null });

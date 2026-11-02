@@ -19,6 +19,8 @@ export type ClientMessage =
   | { readonly t: 'join'; readonly room: string }
   | { readonly t: 'input'; readonly input: ClientInput }
   | { readonly t: 'resync' }
+  /** Round-trip probe: the server echoes `at` back in a pong. */
+  | { readonly t: 'ping'; readonly at: number }
   | { readonly t: 'rematch' };
 
 export type ServerMessage =
@@ -39,6 +41,7 @@ export type ServerMessage =
       readonly sum?: readonly [number, number];
     }
   | { readonly t: 'peer'; readonly present: boolean }
+  | { readonly t: 'pong'; readonly at: number }
   | { readonly t: 'error'; readonly message: string };
 
 /** Ticks per second, and how many ticks the server batches into one message. */
