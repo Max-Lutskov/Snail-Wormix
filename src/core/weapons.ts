@@ -33,8 +33,9 @@ export const WEAPONS: Readonly<Record<WeaponId, Weapon>> = {
     id: 'acorn',
     craterRadius: 52,
     damage: 50,
-    maxSpeed: 13,
-    gravity: 1.35,
+    // Still heavier than the pea, but at full pull it reaches across the world (~1360 px).
+    maxSpeed: 16,
+    gravity: 1.25,
     wind: 1.6,
     ammo: 2,
   },
