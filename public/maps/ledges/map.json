@@ -1,0 +1,15 @@
+{
+  "id": "ledges",
+  "name": "Уступи",
+  "width": 1600,
+  "height": 720,
+  "waterLevel": 662,
+  "spawns": [
+    {
+      "x": 240
+    },
+    {
+      "x": 1360
+    }
+  ]
+}

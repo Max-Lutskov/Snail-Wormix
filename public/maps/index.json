@@ -8,5 +8,10 @@
     "id": "castle",
     "back": true,
     "grass": true
+  },
+  {
+    "id": "ledges",
+    "back": true,
+    "grass": true
   }
 ]
