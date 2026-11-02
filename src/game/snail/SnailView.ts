@@ -359,16 +359,19 @@ export class SnailView {
       case 'idle':
         return moved({ ...BASE, lids: [blink, blink] });
       case 'aim': {
-        // The eyestalks reach along the barrel; the front eye squints; tongue out.
+        // As on the pose sheet: both eyestalks lean a little toward the barrel, side by side
+        // (the front one further, so the eyes never cover each other); the back eye squints,
+        // the front one looks along the barrel; the tip of the tongue sticks out.
         const local = view.aim ?? 0;
         const forward = Math.cos(local) >= 0 ? local : Math.PI - local;
-        const d = Phaser.Math.Clamp(Phaser.Math.RadToDeg(forward) + 90, -20, 75);
+        // Flatter aims lean the eyestalks further forward: 8° aiming straight up, 28° level.
+        const lean = 8 + 20 * Phaser.Math.Clamp(1 + Math.sin(forward), 0, 1);
         return {
           ...BASE,
-          stalks: [d - 6, d + 4],
-          len: 1.08,
-          lids: [0, 0.55],
-          look: { x: Math.cos(forward) * 1.5, y: Math.sin(forward) * 1.5 },
+          stalks: [lean - 10, lean + 10],
+          len: 1.05,
+          lids: [0.6, 0],
+          look: { x: Math.cos(forward) * 1.6, y: Math.sin(forward) * 1.6 },
           mouth: 'tongue',
         };
       }
