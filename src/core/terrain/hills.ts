@@ -143,9 +143,10 @@ export function generateHills(
   fillBelow(mask, columns);
 
   const decor = placeDecor(columns, spawns, r);
-  for (const d of decor) stampDecor(mask, d);
+  const decorPixels = decor.map((d) => stampDecor(mask, d));
+  const decorAlive = new Uint8Array(decor.length).fill(1);
 
-  return { mask, waterLevel, spawns, decor, mossBumps };
+  return { mask, waterLevel, spawns, decor, mossBumps, decorPixels, decorAlive };
 }
 
 /** Sequential wrapper over the pure RNG, to keep placement code readable. */

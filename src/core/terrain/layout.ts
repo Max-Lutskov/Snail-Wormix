@@ -25,4 +25,8 @@ export interface TerrainLayout {
   readonly decor: readonly Decor[];
   /** Moss bumps (already part of the mask), so the renderer can color them. */
   readonly mossBumps: readonly MossBump[];
+  /** Per decor item, the mask pixels it added (derived, never serialized). */
+  readonly decorPixels: readonly Int32Array[];
+  /** Live: 1 while a decor item stands, 0 once a crater destroyed it. */
+  readonly decorAlive: Uint8Array;
 }

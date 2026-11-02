@@ -129,12 +129,34 @@ export function decorCovers(d: Decor, px: number, py: number): boolean {
   }
 }
 
-export function stampDecor(mask: TerrainMask, d: Decor): void {
+/**
+ * Stamps decor into the mask. Returns the indices of the pixels it turned from air into solid;
+ * pixels already solid (the part sunk into the ground) stay ground and are not the decor's.
+ */
+export function stampDecor(mask: TerrainMask, d: Decor): Int32Array {
   const { width, height, data } = mask;
   const b = decorBounds(d);
+  const added: number[] = [];
   for (let py = Math.max(0, b.top); py <= Math.min(height - 1, b.bottom); py++) {
     for (let px = Math.max(0, b.left); px <= Math.min(width - 1, b.right); px++) {
-      if (decorCovers(d, px, py)) data[py * width + px] = 1;
+      const i = py * width + px;
+      if (data[i] === 0 && decorCovers(d, px, py)) {
+        data[i] = 1;
+        added.push(i);
+      }
     }
+  }
+  return Int32Array.from(added);
+}
+
+/** Ground pixels a decor item rests on; if any of them is carved away, the item falls. */
+export function decorSupport(d: Decor): readonly { readonly x: number; readonly y: number }[] {
+  switch (d.kind) {
+    case 'mushroom':
+      return [{ x: d.x, y: d.y + 1 }];
+    case 'dew':
+      return [{ x: Math.floor(d.x), y: Math.floor(d.y + d.r) + 1 }];
+    case 'grass':
+      return d.blades.map((b) => ({ x: d.x + b.dx, y: b.y + 1 }));
   }
 }
