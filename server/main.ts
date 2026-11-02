@@ -9,7 +9,7 @@ import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { ClientMessage, ServerMessage } from '../src/net/protocol';
-import { NET_TICK_RATE } from '../src/net/protocol';
+import { NET_TICK_RATE, validSource } from '../src/net/protocol';
 import { loadMaps } from './maps';
 import { Room, type Peer } from './room';
 
@@ -85,8 +85,12 @@ wss.on('connection', (ws: WebSocket) => {
     if (msg.t === 'ping') {
       if (typeof msg.at === 'number') peer.send({ t: 'pong', at: msg.at });
     } else if (msg.t === 'create' && !room) {
+      if (!validSource(msg.source, (id) => maps(id) !== undefined)) {
+        peer.send({ t: 'error', message: 'unknown map' });
+        return;
+      }
       const code = newCode();
-      room = new Room(code, maps, () => randomInt(2 ** 31));
+      room = new Room(code, msg.source, maps, () => randomInt(2 ** 31));
       rooms.set(code, { room, emptySince: null });
       room.join(peer);
     } else if (msg.t === 'join' && !room) {

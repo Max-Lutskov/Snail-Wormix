@@ -32,6 +32,8 @@ import { ensureFxTextures } from '../fx/fxTextures';
 import { Slingshot, toVector } from '../input/Slingshot';
 import { mapLookup, preloadMaps, readMaps, type LoadedMap } from '../maps/maps';
 import { Online } from '../net/Online';
+import { Menu, type GameMode, type MapChoice } from '../menu/Menu';
+import { hillsThumbnail, mapThumbnail } from '../menu/thumbs';
 import { DecorView, MUSHROOM_SVG_SCALE, MUSHROOM_TEXTURE } from '../terrain/DecorView';
 import { paintGardenArt, type SoilTile } from '../terrain/terrainArt';
 import { paintHillsGrass } from '../terrain/grassArt';
@@ -42,7 +44,7 @@ import { preloadSnail, SnailView, teamColor } from '../snail/SnailView';
 import {
   DEBUG_INFO,
   HUD_HIDE,
-  HUD_INVITE,
+  HUD_MENU,
   HUD_OVERVIEW,
   HUD_JUMP,
   HUD_MOVE,
@@ -124,6 +126,8 @@ export class MatchScene extends Phaser.Scene {
   private overview = false;
   /** When the debug line last refreshed (ms), so online stats update about once a second. */
   private infoAt = 0;
+  /** The start menu (mode, then map); the map behind it stays still. */
+  private menu!: Menu;
 
   constructor() {
     super('MatchScene');
@@ -165,9 +169,16 @@ export class MatchScene extends Phaser.Scene {
         this.act({ fire: toVector(aim) });
       },
     );
+    this.menu = new Menu(this.mapChoices(), (mode, choice) => {
+      this.pick(mode, choice);
+    });
+    // ?room=CODE joins a friend's room at once; ?map=<id> plays it on one device (dev);
+    // otherwise the menu opens over a map.
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('room');
     this.loadTerrain(this.startSource());
-    const code = new URLSearchParams(window.location.search).get('room');
-    if (code) this.goOnline(code);
+    if (code) this.goOnline(code, null);
+    else if (!params.has('map')) this.menu.show();
 
     const selectWeapon = (id: WeaponId): void => {
       this.act({ weapon: id });
@@ -177,8 +188,8 @@ export class MatchScene extends Phaser.Scene {
       if (this.online) this.online.rematch();
       else this.loadTerrain(this.match.terrain.source);
     };
-    const invite = (): void => {
-      if (!this.online) this.goOnline(null);
+    const toMenu = (): void => {
+      this.openMenu();
     };
     const toggleOverview = (): void => {
       this.overview = !this.overview;
@@ -198,7 +209,7 @@ export class MatchScene extends Phaser.Scene {
     this.game.events.on(HUD_MOVE, touchMove);
     this.game.events.on(HUD_JUMP, touchJump);
     this.game.events.on(HUD_HIDE, hide);
-    this.game.events.on(HUD_INVITE, invite);
+    this.game.events.on(HUD_MENU, toMenu);
     this.game.events.on(HUD_OVERVIEW, toggleOverview);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off(HUD_SELECT_WEAPON, selectWeapon);
@@ -206,7 +217,8 @@ export class MatchScene extends Phaser.Scene {
       this.game.events.off(HUD_MOVE, touchMove);
       this.game.events.off(HUD_JUMP, touchJump);
       this.game.events.off(HUD_HIDE, hide);
-      this.game.events.off(HUD_INVITE, invite);
+      this.game.events.off(HUD_MENU, toMenu);
+      this.menu.destroy();
       this.game.events.off(HUD_OVERVIEW, toggleOverview);
       this.online?.close();
     });
@@ -235,12 +247,12 @@ export class MatchScene extends Phaser.Scene {
       keyboard.on('keydown-H', hide);
       keyboard.on('keydown-Z', toggleOverview);
       keyboard.on('keydown-R', () => {
-        if (!this.online) {
+        if (!this.online && !this.menu.open) {
           this.loadTerrain({ kind: 'hills', seed: Math.floor(Math.random() * 1_000_000) });
         }
       });
       keyboard.on('keydown-M', () => {
-        if (!this.online) this.loadTerrain(this.nextSource());
+        if (!this.online && !this.menu.open) this.loadTerrain(this.nextSource());
       });
     }
   }
@@ -249,7 +261,8 @@ export class MatchScene extends Phaser.Scene {
     const keys = ((this.keys.right.some((k) => k.isDown) ? 1 : 0) -
       (this.keys.left.some((k) => k.isDown) ? 1 : 0)) as MatchInput['move'];
     const move = keys !== 0 ? keys : this.touchMove;
-    if (this.online) this.stepOnline(delta, move);
+    if (this.menu.open) this.tickCarry = 0;
+    else if (this.online) this.stepOnline(delta, move);
     else this.stepLocal(delta, move);
     if (!this.canAim()) this.slingshot.cancel();
 
@@ -334,15 +347,15 @@ export class MatchScene extends Phaser.Scene {
     return this.online.started && this.match.snails[this.match.active]?.team === this.online.seat;
   }
 
-  /** Starts a match by link: joins room `code`, or creates a room to invite a friend. */
-  private goOnline(code: string | null): void {
+  /** Starts a match by link: joins room `code`, or creates a room on `source` to invite to. */
+  private goOnline(code: string | null, source: TerrainSource | null): void {
     this.slingshot.cancel();
-    this.online = new Online(code, {
-      start: (map, seed) => {
+    this.online = new Online(code, source, {
+      start: (terrain, seed) => {
         this.netTick = 0;
         this.resyncing = false;
         this.sentMove = 0;
-        this.loadTerrain({ kind: 'map', id: map }, seed);
+        this.loadTerrain(terrain, seed);
       },
       state: (tick, state) => {
         this.netTick = tick;
@@ -356,7 +369,37 @@ export class MatchScene extends Phaser.Scene {
     });
   }
 
+  /** Every drawn map with its preview, then generated hills. */
+  private mapChoices(): MapChoice[] {
+    const drawn = [...this.maps.entries()].map(([id, m]) => ({
+      source: { kind: 'map', id } as const,
+      name: m.data.meta.name,
+      thumb: mapThumbnail(this, m.terrainKey, m.backKey),
+    }));
+    return [...drawn, { source: 'hills', name: 'Пагорби (випадкові)', thumb: hillsThumbnail(1) }];
+  }
+
+  /** A choice from the menu: a match on one device, or a room to invite a friend to. */
+  private pick(mode: GameMode, choice: TerrainSource | 'hills'): void {
+    const source: TerrainSource =
+      choice === 'hills' ? { kind: 'hills', seed: Math.floor(Math.random() * 1_000_000) } : choice;
+    this.overview = false;
+    this.fitCamera();
+    this.loadTerrain(source);
+    if (mode === 'online') this.goOnline(null, source);
+  }
+
+  /** Leaves the match (and the room, online) for the start menu. */
+  private openMenu(): void {
+    this.online?.close();
+    this.online = null;
+    this.slingshot.cancel();
+    this.hudJson = '';
+    this.menu.show();
+  }
+
   private canAim(): boolean {
+    if (this.menu.open) return false;
     const snail = this.match.snails[this.match.active];
     return this.myTurn() && this.match.phase === 'aim' && snail?.alive === true && snail.grounded;
   }
@@ -508,6 +551,7 @@ export class MatchScene extends Phaser.Scene {
           : null,
       winner: m.winner,
       overview: this.overview,
+      menu: this.menu.open,
       online: this.online
         ? {
             room: this.online.room,

@@ -1,9 +1,10 @@
 import { NO_INPUT, type MatchInput, type MatchState } from '../../core/match';
+import type { TerrainSource } from '../../core/terrain/state';
 import type { ClientInput, ClientMessage, ServerMessage } from '../../net/protocol';
 
 export interface OnlineHandlers {
-  /** A new match: the scene loads the map and creates the match with this seed. */
-  start(map: string, seed: number): void;
+  /** A new match: the scene loads the terrain and creates the match with this seed. */
+  start(source: TerrainSource, seed: number): void;
   /** The full state at `tick` (joining a running match, or after a resync). */
   state(tick: number, state: MatchState): void;
   /** Seat, peer or error changed: refresh the HUD. */
@@ -34,9 +35,10 @@ export class Online {
   private retries = 0;
   private closed = false;
 
-  /** Joins the room `code`, or creates a room when it is null. */
+  /** Joins the room `code`, or creates a room on `source` when `code` is null. */
   constructor(
     code: string | null,
+    private readonly source: TerrainSource | null,
     private readonly on: OnlineHandlers,
   ) {
     this.room = code;
@@ -56,7 +58,8 @@ export class Online {
     const ws = new WebSocket(`${scheme}://${window.location.host}/ws`);
     this.ws = ws;
     ws.addEventListener('open', () => {
-      this.send(this.room ? { t: 'join', room: this.room } : { t: 'create' });
+      if (this.room) this.send({ t: 'join', room: this.room });
+      else if (this.source) this.send({ t: 'create', source: this.source });
     });
     ws.addEventListener('message', (e: MessageEvent<string>) => {
       this.retries = 0;
@@ -130,7 +133,7 @@ export class Online {
         this.upTo = 0;
         this.inputs.clear();
         this.sums.clear();
-        this.on.start(m.map, m.seed);
+        this.on.start(m.source, m.seed);
         this.on.changed();
         break;
       case 'state':
@@ -151,7 +154,12 @@ export class Online {
         this.pingMs = Math.round(performance.now() - m.at);
         break;
       case 'error':
-        this.error = m.message === 'room not found' ? 'Кімнату не знайдено' : m.message;
+        this.error =
+          m.message === 'room not found'
+            ? 'Кімнату не знайдено'
+            : m.message === 'room is full'
+              ? 'У кімнаті вже двоє гравців'
+              : m.message;
         this.on.changed();
         break;
     }

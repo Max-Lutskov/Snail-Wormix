@@ -13,12 +13,11 @@ import {
 } from '../src/core/match';
 import type { TerrainLayout } from '../src/core/terrain/layout';
 import type { MapLookup } from '../src/core/terrain/map';
-import { buildTerrain, createTerrainState } from '../src/core/terrain/state';
+import { buildTerrain, createTerrainState, type TerrainSource } from '../src/core/terrain/state';
 import { WEAPON_IDS } from '../src/core/weapons';
 import {
   NET_BATCH,
   NET_CHECKSUM_EVERY,
-  NET_MAP,
   type ClientInput,
   type ClientMessage,
   type ServerMessage,
@@ -52,8 +51,10 @@ export class Room {
   /** Whose turn the held input belongs to: reset when the turn changes. */
   private inputTeam = -1;
 
+  /** @param source the terrain every match in this room is played on (validated by the caller) */
   constructor(
     readonly id: string,
+    private readonly source: TerrainSource,
     private readonly maps: MapLookup,
     private readonly seed: () => number,
   ) {}
@@ -131,13 +132,8 @@ export class Room {
   }
 
   private start(): void {
-    const map = this.maps(NET_MAP);
-    if (!map) {
-      this.broadcast({ t: 'error', message: `map ${NET_MAP} is not available` });
-      return;
-    }
     const seed = this.seed();
-    const terrain = createTerrainState({ kind: 'map', id: NET_MAP });
+    const terrain = createTerrainState(this.source);
     this.layout = buildTerrain(terrain, this.maps);
     this.match = createMatch(terrain, this.layout, seed);
     this.tick = 0;
@@ -145,7 +141,7 @@ export class Room {
     this.pending = { ...NO_INPUT };
     this.outbox = [];
     this.inputTeam = -1;
-    this.broadcast({ t: 'start', map: NET_MAP, seed });
+    this.broadcast({ t: 'start', source: this.source, seed });
   }
 
   /** Takes input only from the player whose turn it is; validates its shape. */

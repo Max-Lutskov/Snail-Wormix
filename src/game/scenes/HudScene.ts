@@ -15,8 +15,8 @@ export const HUD_MOVE = 'hud:move';
 export const HUD_JUMP = 'hud:jump';
 /** Hide in the shell instead of shooting. */
 export const HUD_HIDE = 'hud:hide';
-/** Start a match by link: create a room to invite a friend. */
-export const HUD_INVITE = 'hud:invite';
+/** Back to the start menu. */
+export const HUD_MENU = 'hud:menu';
 /** Toggle the whole-map view. */
 export const HUD_OVERVIEW = 'hud:overview';
 
@@ -45,6 +45,8 @@ export interface HudState {
   readonly winner: number | null;
   /** Zoomed out to the whole map. */
   readonly overview: boolean;
+  /** The start menu is open: the HUD stays out of the way. */
+  readonly menu: boolean;
   /** Online play; null on one device. */
   readonly online: {
     readonly room: string | null;
@@ -180,7 +182,7 @@ export class HudScene extends Phaser.Scene {
     this.info.setVisible(SHOW_DEBUG);
     this.info.setPosition(W / 2 - this.info.width / 2, Hh - 4 - this.info.height);
     const state = this.registry.get(HUD_STATE) as HudState | undefined;
-    if (!state) return;
+    if (!state || state.menu) return;
     const g = this.g;
 
     // Team cards.
@@ -252,10 +254,13 @@ export class HudScene extends Phaser.Scene {
     if (state.banner) this.banner(W, Hh, state.banner);
     else this.bannerText = null;
     const online = state.online;
-    if (!online) {
-      this.pillButton(INSET, INSET + CARD.h + 10, 'Грати з другом', () => {
-        this.game.events.emit(HUD_INVITE);
+    if (state.winner === null) {
+      this.pillButton(INSET, INSET + CARD.h + 10, 'Меню', () => {
+        this.game.events.emit(HUD_MENU);
       });
+    }
+    if (!online) {
+      // Playing on one device: nothing more to show.
     } else if (online.error) {
       this.notice(W, Hh, online.error);
     } else if (!online.started) {
@@ -502,21 +507,24 @@ export class HudScene extends Phaser.Scene {
     g.lineStyle(3, ACCENT, 1).strokeRoundedRect(x, y, pw, ph, 18);
     const t = this.text(0, y + 22, title, 28, team ? team.color : '#ffffff');
     t.setStroke(tokens.colors.snail.outline, 5).setPosition(W / 2 - t.width / 2, y + 22);
-    const bw = 170;
-    const bx = W / 2 - bw / 2;
-    const by = y + ph - 64;
-    g.fillStyle(ACCENT, 1).fillRoundedRect(bx, by, bw, SLOT, 14);
-    g.lineStyle(2, OUTLINE, 1).strokeRoundedRect(bx, by, bw, SLOT, 14);
-    const b = this.text(0, by + 14, 'Ще раз', 20, tokens.colors.hud.panel);
-    b.setPosition(W / 2 - b.width / 2, by + 14);
-    const zone = this.add.zone(bx, by, bw, SLOT).setOrigin(0, 0).setInteractive();
-    zone.on(
-      'pointerdown',
-      (_p: Phaser.Input.Pointer, _x: number, _y: number, e: StoppableEvent) => {
-        e.stopPropagation();
+    const by = y + ph - 58;
+    this.pillButton(
+      W / 2 - 150,
+      by,
+      'Ще раз',
+      () => {
         this.game.events.emit(HUD_RESTART);
       },
+      140,
     );
-    this.zones.push(zone);
+    this.pillButton(
+      W / 2 + 10,
+      by,
+      'Меню',
+      () => {
+        this.game.events.emit(HUD_MENU);
+      },
+      140,
+    );
   }
 }

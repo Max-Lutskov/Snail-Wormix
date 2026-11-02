@@ -8,7 +8,7 @@ import {
   type MatchState,
 } from '../src/core/match';
 import type { TerrainLayout } from '../src/core/terrain/layout';
-import { buildTerrain, createTerrainState } from '../src/core/terrain/state';
+import { buildTerrain, createTerrainState, type TerrainSource } from '../src/core/terrain/state';
 import type { ServerMessage } from '../src/net/protocol';
 import { loadMaps } from './maps';
 import { Room, type Peer } from './room';
@@ -26,7 +26,7 @@ class FakeClient implements Peer {
   send(message: ServerMessage): void {
     this.got.push(JSON.parse(JSON.stringify(message)) as ServerMessage);
     if (message.t === 'start') {
-      const terrain = createTerrainState({ kind: 'map', id: message.map });
+      const terrain = createTerrainState(message.source);
       this.layout = buildTerrain(terrain, maps);
       this.match = createMatch(terrain, this.layout, message.seed);
       this.tick = 0;
@@ -43,13 +43,15 @@ class FakeClient implements Peer {
   }
 }
 
-function room(): Room {
+const GLADE = { kind: 'map', id: 'glade' } as const;
+
+function room(source: TerrainSource = GLADE): Room {
   let n = 0;
-  return new Room('ABCDE', maps, () => 1234 + n++);
+  return new Room('ABCDE', source, maps, () => 1234 + n++);
 }
 
 describe('room', () => {
-  it('seats two players and starts the match on the online map', () => {
+  it('seats two players and starts the match on the room map', () => {
     const r = room();
     const a = new FakeClient();
     const b = new FakeClient();
@@ -57,8 +59,8 @@ describe('room', () => {
     expect(a.got).toContainEqual({ t: 'room', room: 'ABCDE', seat: 0 });
     expect(a.got.some((m) => m.t === 'start')).toBe(false);
     expect(r.join(b)).toBe(1);
-    expect(a.got).toContainEqual({ t: 'start', map: 'glade', seed: 1234 });
-    expect(b.got).toContainEqual({ t: 'start', map: 'glade', seed: 1234 });
+    expect(a.got).toContainEqual({ t: 'start', source: GLADE, seed: 1234 });
+    expect(b.got).toContainEqual({ t: 'start', source: GLADE, seed: 1234 });
     expect(r.join(new FakeClient())).toBeNull();
   });
 
@@ -87,6 +89,18 @@ describe('room', () => {
     expect(JSON.stringify(a.match)).toBe(JSON.stringify(b.match));
     expect(a.match?.snails[0]?.x).toBeGreaterThan(x0);
     expect(a.match?.turn).toBeGreaterThan(1);
+  });
+
+  it('plays generated hills too, in step on both clients', () => {
+    const r = room({ kind: 'hills', seed: 77 });
+    const a = new FakeClient();
+    const b = new FakeClient();
+    r.join(a);
+    r.join(b);
+    for (let i = 0; i < 200; i++) r.step();
+    expect(a.sums.length).toBeGreaterThan(2);
+    for (const [, server, client] of a.sums) expect(client).toBe(server);
+    expect(a.match?.terrain.source).toEqual({ kind: 'hills', seed: 77 });
   });
 
   it('sends the running state to a player who rejoins', () => {

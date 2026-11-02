@@ -20,6 +20,8 @@ export interface LoadedMap {
   readonly data: MapData;
   /** The terrain PNG's pixels (ART_SCALE px per world unit), used as the map's base art. */
   readonly rgba: Rgba;
+  /** Texture key of the terrain PNG (for previews). */
+  readonly terrainKey: string;
   /** Texture key of the non-solid background layer, if the map has one. */
   readonly backKey: string | null;
   /** Texture key of the non-solid grass layer in front (craters erase it), if any. */
@@ -88,6 +90,7 @@ export function readMaps(scene: Phaser.Scene): Map<string, LoadedMap> {
       maps.set(id, {
         data: { meta, alpha },
         rgba,
+        terrainKey: terrainKey(id),
         backKey: back && scene.textures.exists(backKey(id)) ? backKey(id) : null,
         grassKey: grass && scene.textures.exists(grassKey(id)) ? grassKey(id) : null,
       });
