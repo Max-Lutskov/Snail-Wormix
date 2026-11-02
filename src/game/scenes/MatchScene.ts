@@ -11,7 +11,14 @@ import {
   type MatchInput,
   type MatchState,
 } from '../../core/match';
-import { planMove, type BotLevel, type BotMove } from '../../core/bot';
+import {
+  planMove,
+  planPosition,
+  planRetreat,
+  type BotLevel,
+  type BotMove,
+  type Crawl,
+} from '../../core/bot';
 import { MAX_WIND, type ShotWorld } from '../../core/projectile';
 import { seedRng, type RngState } from '../../core/rng';
 import { SNAIL } from '../../core/snail/snail';
@@ -143,7 +150,14 @@ export class MatchScene extends Phaser.Scene {
     level: BotLevel;
     rng: RngState;
     turn: number;
+    /** This turn: the crawl before shooting (planned once), and when it ends (phase ticks). */
+    crawl: Crawl | null | undefined;
+    crawlEnd: number;
     move: BotMove | null;
+    /** When the aim swing started (phase ticks). */
+    aimStart: number;
+    /** The crawl away after shooting (planned once at the start of the retreat). */
+    retreat: Crawl | null | undefined;
     /** The aim angle being shown while it "aims". */
     aim: number | null;
   } | null = null;
@@ -330,28 +344,55 @@ export class MatchScene extends Phaser.Scene {
   private botInput(): MatchInput {
     const bot = this.bot;
     const m = this.match;
-    if (!bot || m.phase !== 'aim') {
-      if (bot) bot.aim = null;
-      return NO_INPUT;
-    }
+    if (!bot) return NO_INPUT;
     if (bot.turn !== m.turn) {
       bot.turn = m.turn;
+      bot.crawl = undefined;
       bot.move = null;
+      bot.retreat = undefined;
       bot.aim = null;
+    }
+    if (m.phase === 'retreat') {
+      // After the shot: crawl away from the enemy if that's safe.
+      bot.aim = null;
+      if (bot.retreat === undefined) {
+        const plan = planRetreat(m, this.layout, bot.rng);
+        bot.rng = plan.rng;
+        bot.retreat = plan.crawl;
+      }
+      return bot.retreat && m.phaseTicks < bot.retreat.ticks
+        ? { ...NO_INPUT, move: bot.retreat.dir }
+        : NO_INPUT;
+    }
+    if (m.phase !== 'aim') {
+      bot.aim = null;
+      return NO_INPUT;
     }
     const t = m.phaseTicks;
     if (t < BOT_THINK_TICKS) return NO_INPUT;
+    // First, maybe crawl to a spot with a better shot.
+    if (bot.crawl === undefined) {
+      const plan = planPosition(m, this.layout, bot.rng);
+      bot.rng = plan.rng;
+      bot.crawl = plan.crawl;
+      bot.crawlEnd = t + (plan.crawl?.ticks ?? 0);
+    }
+    if (bot.crawl && t < bot.crawlEnd) return { ...NO_INPUT, move: bot.crawl.dir };
+    const me = m.snails[m.active];
+    if (!me?.grounded) return NO_INPUT;
+    // Then decide the shot from where it stands now.
     if (!bot.move) {
       const plan = planMove(m, this.layout, bot.level, bot.rng);
       bot.rng = plan.rng;
       bot.move = plan.move;
+      bot.aimStart = t;
       if (plan.move.kind === 'hide') return { ...NO_INPUT, hide: true };
       return { ...NO_INPUT, weapon: plan.move.weapon };
     }
     const move = bot.move;
     if (move.kind !== 'shoot') return NO_INPUT;
     const target = Math.atan2(move.aim.y, move.aim.x);
-    const k = Math.min(1, (t - BOT_THINK_TICKS) / BOT_AIM_TICKS);
+    const k = Math.min(1, (t - bot.aimStart) / BOT_AIM_TICKS);
     // Swing the cannon from its rest pose (up and forward) to the shot.
     const facing = this.match.snails[m.active]?.facing ?? 1;
     const rest = facing === 1 ? -0.95 : Math.PI + 0.95;
@@ -458,7 +499,11 @@ export class MatchScene extends Phaser.Scene {
             level,
             rng: seedRng(Math.floor(Math.random() * 2 ** 31)),
             turn: -1,
+            crawl: undefined,
+            crawlEnd: 0,
             move: null,
+            aimStart: 0,
+            retreat: undefined,
             aim: null,
           }
         : null;

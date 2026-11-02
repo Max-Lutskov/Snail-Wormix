@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planMove } from './bot';
+import { planMove, planPosition, planRetreat } from './bot';
 import { createMatch, NO_INPUT, stepMatch, type MatchEvent, type MatchState } from './match';
 import { seedRng } from './rng';
 import type { TerrainLayout } from './terrain/layout';
@@ -68,5 +68,28 @@ describe('bot', () => {
     for (let seed = 0; seed < 20; seed++)
       kinds.add(planMove(weak, layout, 'easy', seedRng(seed)).move.kind);
     expect(kinds).toEqual(new Set(['hide', 'shoot']));
+  });
+
+  it('picks a safe crawl (or none) before shooting, the same way from the same seed', () => {
+    for (const seed of [1, 2, 3]) {
+      const { state, layout } = botTurn(seed);
+      const a = planPosition(state, layout, seedRng(seed));
+      expect(a).toEqual(planPosition(state, layout, seedRng(seed)));
+      if (!a.crawl) continue;
+      // Crawling as planned keeps the bot on the ground, out of the water.
+      let s = stepMatch(state, NO_INPUT, layout).state;
+      for (let i = 0; i < a.crawl.ticks; i++) {
+        s = stepMatch(s, { ...NO_INPUT, move: a.crawl.dir }, layout).state;
+      }
+      expect(s.snails[1]).toMatchObject({ alive: true, grounded: true });
+    }
+  });
+
+  it('retreats away from the enemy after shooting', () => {
+    const { state, layout } = botTurn(2);
+    const { crawl } = planRetreat(state, layout, seedRng(1));
+    const me = state.snails[1];
+    const enemy = state.snails[0];
+    if (crawl && me && enemy) expect(crawl.dir).toBe(me.x >= enemy.x ? 1 : -1);
   });
 });

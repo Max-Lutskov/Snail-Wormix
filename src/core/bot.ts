@@ -4,13 +4,18 @@
  * nearest the closest enemy without hurting itself, then misses by an amount that depends on
  * its skill. Low on health, it sometimes hides in its shell instead.
  *
+ * Tactics: before shooting it may crawl to a better spot (planPosition): it tries a few
+ * crawls left and right with the snail physics, skips those that drop it off a ledge, and
+ * picks the spot whose best shot is the most forgiving (still lands near the target when
+ * slightly off). After shooting it crawls away from the enemy if that is safe (planRetreat).
+ *
  * Pure and seeded like the rest of core: the same state and RNG give the same decision.
  */
 
 import { canHide, type MatchState } from './match';
 import { launch, stepProjectile, type Aim, type ShotWorld } from './projectile';
 import { nextFloat, type RngState } from './rng';
-import { SNAIL, type Snail } from './snail/snail';
+import { SNAIL, stepSnail, type Snail, type SnailWorld } from './snail/snail';
 import type { TerrainLayout } from './terrain/layout';
 import { DAMAGE_REACH, WEAPONS, type WeaponId } from './weapons';
 
@@ -19,8 +24,8 @@ export type BotLevel = 'easy' | 'normal' | 'hard';
 /** How far off the bot's chosen shot may be: angle (radians) and pull, uniform ±. */
 export const BOT_SKILL: Readonly<Record<BotLevel, { angle: number; power: number }>> = {
   easy: { angle: 0.12, power: 0.09 },
-  normal: { angle: 0.045, power: 0.035 },
-  hard: { angle: 0.012, power: 0.01 },
+  normal: { angle: 0.055, power: 0.045 },
+  hard: { angle: 0.03, power: 0.025 },
 };
 
 export type BotMove =
@@ -30,6 +35,12 @@ export type BotMove =
 /** Below this health the bot considers hiding, and does with this chance. */
 const HIDE_HP = 35;
 const HIDE_CHANCE = 0.35;
+/**
+ * Repositioning: a crawl whose shot is at most MOVE_SLACK px worse than staying is still taken
+ * with chance MOVE_CHANCE.
+ */
+const MOVE_SLACK = 20;
+const MOVE_CHANCE = 0.6;
 /** A flight longer than this many ticks counts as lost. */
 const MAX_FLIGHT = 600;
 
@@ -85,6 +96,11 @@ function bestShot(
   target: { x: number; y: number },
   weapons: readonly WeaponId[],
   world: ShotWorld,
+  sweep: { angle: number; power: number; refine: boolean } = {
+    angle: 0.035,
+    power: 0.05,
+    refine: true,
+  },
 ): Candidate | null {
   // A holder, so the closure's updates are visible to the type checker below.
   const found: { best: Candidate | null } = { best: null };
@@ -94,17 +110,140 @@ function bestShot(
     if (!found.best || s < found.best.score) found.best = { weapon, angle, power, score: s };
   };
   for (const weapon of weapons) {
-    for (let angle = -Math.PI + 0.05; angle < -0.05; angle += 0.035) {
-      for (let power = 0.25; power <= 1.0001; power += 0.05) consider(weapon, angle, power);
+    for (let angle = -Math.PI + 0.05; angle < -0.05; angle += sweep.angle) {
+      for (let power = 0.25; power <= 1.0001; power += sweep.power) consider(weapon, angle, power);
     }
   }
   const coarse = found.best;
-  if (!coarse) return null;
+  if (!coarse || !sweep.refine) return coarse;
   const { weapon, angle: a0, power: p0 } = coarse;
   for (let da = -0.035; da <= 0.035; da += 0.007) {
     for (let dp = -0.05; dp <= 0.05; dp += 0.01) consider(weapon, a0 + da, p0 + dp);
   }
   return found.best;
+}
+
+function nearestEnemy(state: MatchState, me: Snail): Snail | undefined {
+  return state.snails
+    .filter((s) => s.alive && s.team !== me.team)
+    .sort((a, b) => Math.abs(a.x - me.x) - Math.abs(b.x - me.x))[0];
+}
+
+function usableWeapons(state: MatchState, team: number): WeaponId[] {
+  const ammo = state.ammo[team];
+  return (['pea', 'acorn'] as const).filter((w) => {
+    const left = ammo?.[w];
+    return left === null || (left ?? 0) > 0;
+  });
+}
+
+/** A crawl the bot can make: direction and how many ticks to hold it. */
+export interface Crawl {
+  readonly dir: -1 | 1;
+  readonly ticks: number;
+}
+
+/**
+ * Where the snail ends up crawling `dir` for `ticks`, or null if that is unsafe: it would
+ * leave the ground, drop more than a step-and-a-half, or end in the water.
+ */
+function crawlTo(me: Snail, crawl: Crawl, world: SnailWorld): Snail | null {
+  let s = me;
+  for (let t = 0; t < crawl.ticks; t++) {
+    s = stepSnail(s, { move: crawl.dir, jump: false }, world);
+    if (!s.alive || !s.grounded || Math.abs(s.y - me.y) > 40) return null;
+  }
+  return Math.abs(s.x - me.x) < 4 ? null : s;
+}
+
+/**
+ * How forgiving the best shot from `from` is: the mean miss of it and four slightly-off
+ * versions (the bot's own error), so spots with an easy, open shot score lower.
+ */
+function shotQuality(
+  from: Snail,
+  target: Snail,
+  weapons: readonly WeaponId[],
+  world: ShotWorld,
+): number {
+  const aimAt = center(target);
+  const best = bestShot(from, aimAt, weapons, world, { angle: 0.07, power: 0.1, refine: false });
+  if (!best) return Number.POSITIVE_INFINITY;
+  const offsets = [
+    [0, 0],
+    [0.03, 0],
+    [-0.03, 0],
+    [0, 0.03],
+    [0, -0.03],
+  ] as const;
+  let sum = 0;
+  for (const [da, dp] of offsets) {
+    const s = score(from, aimAt, best.weapon, best.angle + da, best.power + dp, world);
+    sum += Math.min(s, 400);
+  }
+  return sum / offsets.length;
+}
+
+/**
+ * Whether to crawl before shooting, and where: the spot (staying, or a short or longer crawl
+ * either way) with the most forgiving shot; a crawl must be clearly better to be worth it,
+ * and a little randomness keeps the bot from being predictable.
+ */
+export function planPosition(
+  state: MatchState,
+  layout: TerrainLayout,
+  rng: RngState,
+): { crawl: Crawl | null; rng: RngState } {
+  const me = state.snails[state.active];
+  const target = me ? nearestEnemy(state, me) : undefined;
+  if (!me || !target) return { crawl: null, rng };
+  const walkWorld: SnailWorld = { mask: layout.mask, waterLevel: layout.waterLevel };
+  const shotWorld: ShotWorld = { ...walkWorld, wind: state.wind, snails: state.snails };
+  const weapons = usableWeapons(state, me.team);
+  let r = rng;
+  const jitter = (): number => {
+    const n = nextFloat(r);
+    r = n.state;
+    return n.value * 12;
+  };
+  const stay = shotQuality(me, target, weapons, shotWorld) + jitter();
+  let move: { crawl: Crawl; cost: number } | null = null;
+  for (const dir of [-1, 1] as const) {
+    for (const ticks of [40, 80, 130]) {
+      const crawl = { dir, ticks };
+      const at = crawlTo(me, crawl, walkWorld);
+      if (!at) continue;
+      const snails = state.snails.map((s) => (s.id === me.id ? at : s));
+      const cost = shotQuality(at, target, weapons, { ...shotWorld, snails }) + jitter();
+      if (!move || cost < move.cost) move = { crawl, cost };
+    }
+  }
+  // Crawl when it gives a better shot, and usually also when it's not much worse: a bot that
+  // never moves looks like a turret.
+  const roll = nextFloat(r);
+  r = roll.state;
+  if (!move) return { crawl: null, rng: r };
+  const worthIt = move.cost < stay || (move.cost < stay + MOVE_SLACK && roll.value < MOVE_CHANCE);
+  return { crawl: worthIt ? move.crawl : null, rng: r };
+}
+
+/** After its shot: a safe crawl away from the enemy, or null to stay put. */
+export function planRetreat(
+  state: MatchState,
+  layout: TerrainLayout,
+  rng: RngState,
+): { crawl: Crawl | null; rng: RngState } {
+  const me = state.snails[state.active];
+  const enemy = me ? nearestEnemy(state, me) : undefined;
+  if (!me?.alive || !enemy) return { crawl: null, rng };
+  const n = nextFloat(rng);
+  const away: -1 | 1 = me.x >= enemy.x ? 1 : -1;
+  const world: SnailWorld = { mask: layout.mask, waterLevel: layout.waterLevel };
+  for (const ticks of [Math.round(70 + n.value * 50), 40]) {
+    const crawl = { dir: away, ticks };
+    if (crawlTo(me, crawl, world)) return { crawl, rng: n.state };
+  }
+  return { crawl: null, rng: n.state };
 }
 
 /** The bot's move for the active snail of `state` (which must be the bot's). */
