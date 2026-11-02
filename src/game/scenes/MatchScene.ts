@@ -1,4 +1,12 @@
 import Phaser from 'phaser';
+import {
+  applyExplosion,
+  spawnSnail,
+  stepSnail,
+  type Snail,
+  type SnailInput,
+  type SnailWorld,
+} from '../../core/snail/snail';
 import { checksum } from '../../core/terrain/mask';
 import type { TerrainLayout } from '../../core/terrain/layout';
 import {
@@ -23,19 +31,28 @@ import { paintGardenArt, type SoilTile } from '../terrain/terrainArt';
 import { paintHillsGrass } from '../terrain/grassArt';
 import { GrassView } from '../terrain/GrassView';
 import { TerrainView } from '../terrain/TerrainView';
+import { preloadSnail, SnailView } from '../snail/SnailView';
 import { DEBUG_INFO } from './HudScene';
 
-const CAMERA_PAN_SPEED = 600; // world px per second
+/** Simulation tick (core steps are fixed at 60 per second). */
+const TICK_MS = 1000 / 60;
+/** At most this many ticks per frame, so a stalled tab doesn't fast-forward. */
+const MAX_TICKS_PER_FRAME = 5;
+/** Camera follow smoothing (share of the distance per frame). */
+const CAMERA_LERP = 0.08;
 const SOIL_TILE_KEY = 'soil-tile';
-/** How far past the world edges the camera may look, so falls into the water are visible. */
-const CAMERA_MARGIN = 80;
+/**
+ * How far past the world edges the camera may look. None: a drawn map's backdrop ends at the
+ * world edge, and the water there is visible anyway.
+ */
+const CAMERA_MARGIN = 0;
 /** Grass fringe: over the ground, under its decor (so mushrooms aren't buried). */
 const GRASS_DEPTH = 0.4;
 
 /**
- * Match scene. For now a terrain sandbox:
- * click = pea crater, shift+click = acorn crater, ←/→ or A/D = pan,
- * R = new generated hills, M = next drawn map.
+ * Match scene. For now a sandbox: two snails on the terrain.
+ * ←/→ or A/D = crawl, W/↑/space = jump, Tab = other snail, click = pea crater,
+ * shift+click = acorn crater, R = new generated hills, M = next drawn map.
  */
 export class MatchScene extends Phaser.Scene {
   private state!: TerrainState;
@@ -48,10 +65,17 @@ export class MatchScene extends Phaser.Scene {
   private water!: Water;
   private soilTile!: SoilTile;
   private layoutSky!: (camera: Phaser.Cameras.Scene2D.Camera) => void;
-  private keys: { left: Phaser.Input.Keyboard.Key[]; right: Phaser.Input.Keyboard.Key[] } = {
-    left: [],
-    right: [],
-  };
+  private keys: {
+    left: Phaser.Input.Keyboard.Key[];
+    right: Phaser.Input.Keyboard.Key[];
+    jump: Phaser.Input.Keyboard.Key[];
+  } = { left: [], right: [], jump: [] };
+  private snails: Snail[] = [];
+  private snailViews: SnailView[] = [];
+  private active = 0;
+  private tickCarry = 0;
+  /** A jump press waits here until the next tick consumes it. */
+  private jumpQueued = false;
 
   constructor() {
     super('MatchScene');
@@ -61,6 +85,7 @@ export class MatchScene extends Phaser.Scene {
     const size = tokens.terrain.soilTileSize * ART_SCALE;
     this.load.svg(SOIL_TILE_KEY, 'art/soil-tile.svg', { width: size, height: size });
     this.load.svg(MUSHROOM_TEXTURE, 'art/mushroom.svg', { scale: MUSHROOM_SVG_SCALE });
+    preloadSnail(this);
     preloadMaps(this);
   }
 
@@ -96,7 +121,17 @@ export class MatchScene extends Phaser.Scene {
       this.keys = {
         left: [keyboard.addKey(K.LEFT), keyboard.addKey(K.A)],
         right: [keyboard.addKey(K.RIGHT), keyboard.addKey(K.D)],
+        jump: [keyboard.addKey(K.UP), keyboard.addKey(K.W), keyboard.addKey(K.SPACE)],
       };
+      for (const k of this.keys.jump) {
+        k.on('down', () => {
+          this.jumpQueued = true;
+        });
+      }
+      const tab = keyboard.addKey(K.TAB);
+      tab.on('down', () => {
+        this.active = (this.active + 1) % Math.max(1, this.snails.length);
+      });
       keyboard.on('keydown-R', () => {
         this.loadTerrain({ kind: 'hills', seed: Math.floor(Math.random() * 1_000_000) });
       });
@@ -107,11 +142,30 @@ export class MatchScene extends Phaser.Scene {
   }
 
   override update(time: number, delta: number): void {
-    const dir =
-      (this.keys.right.some((k) => k.isDown) ? 1 : 0) -
-      (this.keys.left.some((k) => k.isDown) ? 1 : 0);
-    if (dir !== 0) this.cameras.main.scrollX += (dir * CAMERA_PAN_SPEED * delta) / 1000;
+    const move = ((this.keys.right.some((k) => k.isDown) ? 1 : 0) -
+      (this.keys.left.some((k) => k.isDown) ? 1 : 0)) as SnailInput['move'];
+    const world: SnailWorld = { mask: this.layout.mask, waterLevel: this.layout.waterLevel };
+    this.tickCarry = Math.min(this.tickCarry + delta, TICK_MS * MAX_TICKS_PER_FRAME);
+    while (this.tickCarry >= TICK_MS) {
+      this.tickCarry -= TICK_MS;
+      const input: SnailInput = { move, jump: this.jumpQueued };
+      this.jumpQueued = false;
+      this.snails = this.snails.map((s, i) =>
+        stepSnail(s, i === this.active ? input : { move: 0, jump: false }, world),
+      );
+    }
+    this.snails.forEach((s, i) => this.snailViews[i]?.update(s, this.layout.mask, time));
+    this.followActive();
     this.water.update(time);
+  }
+
+  /** Eases the camera toward the active snail. */
+  private followActive(): void {
+    const snail = this.snails[this.active];
+    if (!snail?.alive) return;
+    const camera = this.cameras.main;
+    const { x, y } = camera.midPoint;
+    camera.centerOn(x + (snail.x - x) * CAMERA_LERP, y + (snail.y - y) * CAMERA_LERP);
   }
 
   /** Zooms the camera so the world's full height fills the (physical-pixel) viewport. */
@@ -201,7 +255,19 @@ export class MatchScene extends Phaser.Scene {
       );
     }
     this.water.setLevel(this.layout.waterLevel);
+    this.spawnSnails();
     this.updateInfo();
+  }
+
+  /** One snail per team on the first two spawn points. */
+  private spawnSnails(): void {
+    for (const v of this.snailViews) v.destroy();
+    const world: SnailWorld = { mask: this.layout.mask, waterLevel: this.layout.waterLevel };
+    this.snails = this.layout.spawns
+      .slice(0, 2)
+      .map((spawn, i) => ({ ...spawnSnail(i, i, spawn.x, world), facing: i === 0 ? 1 : -1 }));
+    this.snailViews = this.snails.map((s) => new SnailView(this, s));
+    this.active = 0;
   }
 
   private explode(crater: Crater): void {
@@ -211,6 +277,7 @@ export class MatchScene extends Phaser.Scene {
       this.view?.onCrater(crater);
       this.decor?.remove(result.removedDecor);
       this.grass?.onCrater(crater);
+      this.snails = this.snails.map((s) => applyExplosion(s, crater));
       this.updateInfo();
     });
   }
@@ -222,7 +289,8 @@ export class MatchScene extends Phaser.Scene {
     this.registry.set(
       DEBUG_INFO,
       `${where} · craters ${craters.length} · mask ${hash} · maps loaded ${this.maps.size}\n` +
-        'click: pea · shift+click: acorn · ←/→ A/D: pan · R: new hills · M: next map',
+        '←/→ A/D: crawl · W/space: jump · Tab: other snail · click: pea · shift+click: acorn · ' +
+        'R: new hills · M: next map',
     );
   }
 }
