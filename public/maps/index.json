@@ -11,7 +11,7 @@
   },
   {
     "id": "island",
-    "back": true,
+    "back": false,
     "grass": true
   }
 ]

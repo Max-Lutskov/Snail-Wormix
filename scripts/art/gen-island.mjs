@@ -4,8 +4,8 @@
 // stones are irregular blobs lit from the top left with soft cast shadows, and the grass is one
 // continuous cap of rounded clumps with a lit fibre texture (no separate blades).
 //
-// Layers: terrain.svg is solid (soil body, stones, grass cap); back.svg holds a darker row of
-// grass clumps behind; grass.svg holds the hanging roots (erased by craters). Seeded, so the output is stable. Usage: node scripts/art/gen-island.mjs
+// Layers: terrain.svg is solid (soil body, stones, grass cap); grass.svg holds the hanging
+// roots (erased by craters). Seeded, so the output is stable. Usage: node scripts/art/gen-island.mjs
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { f, makeRng, OUT } from './paint-lib.mjs';
 
@@ -334,30 +334,11 @@ const capDefs =
   `<feComposite in="t" in2="SourceAlpha" operator="in"/></filter>`;
 
 const FRONT_CAP = { base: '#58A835', light: '#CDF383', shade: '#1D5014', line: '#173A10' };
-const BACK_CAP = { base: '#3B7E28', light: '#7DBC48', shade: '#163F0F', line: '#0F2C0A' };
 
 const turf =
   `<path d="${band(capTop, shadowLow)}" fill="#0E0703" opacity=".5" filter="url(#soft4)" clip-path="url(#body)"/>` +
   capFill('cap', capTop, capLow, front.valleys, front.d, FRONT_CAP) +
   `<path d="${capPath}" fill="none" stroke="${FRONT_CAP.line}" stroke-width="2.6" stroke-linejoin="round"/>`;
-
-// Behind: a darker, taller row of clumps peeking over the front cap, for depth.
-const backRow = clumps(12, 22, 30, 60);
-const backTop = offsetEdge(backRow.d);
-const backPath = band(
-  backTop,
-  offsetEdge(() => -24),
-);
-const backCap =
-  capFill(
-    'backCap',
-    backTop,
-    offsetEdge(() => 0),
-    backRow.valleys,
-    backRow.d,
-    BACK_CAP,
-  ) +
-  `<path d="${backPath}" fill="none" stroke="${BACK_CAP.line}" stroke-width="2.4" stroke-linejoin="round"/>`;
 
 // --- Hanging roots ------------------------------------------------------------------------------
 
@@ -405,11 +386,6 @@ const terrain =
   `  <path d="${outline}" fill="none" stroke="${OUT}" stroke-width="5" stroke-linejoin="round"/>\n` +
   `  ${protruding.join('')}\n  ${turf}\n</svg>\n`;
 
-const back =
-  header('non-solid back layer: a darker row of grass clumps behind the edge') +
-  `  <defs>${softDefs}${capDefs}<clipPath id="backCap"><path d="${backPath}"/></clipPath></defs>\n` +
-  `  ${backCap}\n</svg>\n`;
-
 const grass =
   header('non-solid front layer: hanging roots, erased by craters') +
   `  <defs>${rootDefs}</defs>\n  ${roots.join('')}\n</svg>\n`;
@@ -426,6 +402,5 @@ const meta = {
 mkdirSync(DIR, { recursive: true });
 writeFileSync(`${DIR}/terrain.svg`, terrain);
 writeFileSync(`${DIR}/grass.svg`, grass);
-writeFileSync(`${DIR}/back.svg`, back);
 writeFileSync(`${DIR}/map.json`, `${JSON.stringify(meta, null, 2)}\n`);
-console.log('island: terrain', terrain.length, 'grass', grass.length, 'back', back.length, 'bytes');
+console.log('island: terrain', terrain.length, 'grass', grass.length, 'bytes');
