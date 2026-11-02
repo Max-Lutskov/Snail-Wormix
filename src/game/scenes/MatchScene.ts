@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import {
   aimTicksLeft,
+  canHide,
   createMatch,
   stepMatch,
   type MatchEvent,
@@ -36,6 +37,7 @@ import { preloadShots, ShotView } from '../snail/ShotView';
 import { preloadSnail, SnailView, teamColor } from '../snail/SnailView';
 import {
   DEBUG_INFO,
+  HUD_HIDE,
   HUD_JUMP,
   HUD_MOVE,
   HUD_RESTART,
@@ -88,11 +90,7 @@ export class MatchScene extends Phaser.Scene {
   private slingshot!: Slingshot;
   private tickCarry = 0;
   /** Discrete inputs wait here until the next tick consumes them. */
-  private queued: { jump: boolean; fire: MatchInput['fire']; weapon: WeaponId | null } = {
-    jump: false,
-    fire: null,
-    weapon: null,
-  };
+  private queued: Omit<MatchInput, 'move'> = { jump: false, fire: null, weapon: null, hide: false };
   private hudJson = '';
   /** Crawl direction held on the on-screen buttons. */
   private touchMove: MatchInput['move'] = 0;
@@ -134,13 +132,13 @@ export class MatchScene extends Phaser.Scene {
       this,
       () => this.canAim(),
       (aim) => {
-        this.queued.fire = aim;
+        this.queued = { ...this.queued, fire: aim };
       },
     );
     this.loadTerrain(this.startSource());
 
     const selectWeapon = (id: WeaponId): void => {
-      this.queued.weapon = id;
+      this.queued = { ...this.queued, weapon: id };
     };
     const restart = (): void => {
       if (this.match.phase === 'over') this.loadTerrain(this.match.terrain.source);
@@ -149,17 +147,22 @@ export class MatchScene extends Phaser.Scene {
       this.touchMove = move;
     };
     const touchJump = (): void => {
-      this.queued.jump = true;
+      this.queued = { ...this.queued, jump: true };
+    };
+    const hide = (): void => {
+      this.queued = { ...this.queued, hide: true };
     };
     this.game.events.on(HUD_SELECT_WEAPON, selectWeapon);
     this.game.events.on(HUD_RESTART, restart);
     this.game.events.on(HUD_MOVE, touchMove);
     this.game.events.on(HUD_JUMP, touchJump);
+    this.game.events.on(HUD_HIDE, hide);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off(HUD_SELECT_WEAPON, selectWeapon);
       this.game.events.off(HUD_RESTART, restart);
       this.game.events.off(HUD_MOVE, touchMove);
       this.game.events.off(HUD_JUMP, touchJump);
+      this.game.events.off(HUD_HIDE, hide);
     });
 
     const keyboard = this.input.keyboard;
@@ -172,7 +175,7 @@ export class MatchScene extends Phaser.Scene {
       };
       for (const k of this.keys.jump) {
         k.on('down', () => {
-          this.queued.jump = true;
+          this.queued = { ...this.queued, jump: true };
         });
       }
       WEAPON_IDS.forEach((id, i) => {
@@ -183,6 +186,7 @@ export class MatchScene extends Phaser.Scene {
           });
       });
       keyboard.on('keydown-ENTER', restart);
+      keyboard.on('keydown-H', hide);
       keyboard.on('keydown-R', () => {
         this.loadTerrain({ kind: 'hills', seed: Math.floor(Math.random() * 1_000_000) });
       });
@@ -200,7 +204,7 @@ export class MatchScene extends Phaser.Scene {
     while (this.tickCarry >= TICK_MS) {
       this.tickCarry -= TICK_MS;
       const input: MatchInput = { move, ...this.queued };
-      this.queued = { jump: false, fire: null, weapon: null };
+      this.queued = { jump: false, fire: null, weapon: null, hide: false };
       const r = stepMatch(this.match, input, this.layout);
       this.match = r.state;
       for (const e of r.events) this.onEvent(e);
@@ -253,6 +257,11 @@ export class MatchScene extends Phaser.Scene {
         this.grass?.onCrater(e.crater);
         this.dust(e.crater.x, e.crater.y);
         break;
+      case 'hide': {
+        const s = this.match.snails.find((x) => x.id === e.snail);
+        if (s) this.popup(s.x, s.y - SNAIL.height - 30, 'Сховався!', tokens.colors.hud.accent);
+        break;
+      }
       case 'damage': {
         const s = this.match.snails.find((x) => x.id === e.snail);
         if (s) this.popup(s.x, s.y - SNAIL.height - 30, `-${e.amount}`);
@@ -280,13 +289,18 @@ export class MatchScene extends Phaser.Scene {
   }
 
   /** A damage number floating up from a snail. */
-  private popup(x: number, y: number, label: string): void {
+  private popup(
+    x: number,
+    y: number,
+    label: string,
+    color: string = tokens.colors.crater.tomatoSplat,
+  ): void {
     const t = this.add
       .text(x, y, label, {
         fontFamily: 'Trebuchet MS, Arial, sans-serif',
         fontSize: '18px',
         fontStyle: 'bold',
-        color: tokens.colors.crater.tomatoSplat,
+        color,
         stroke: tokens.colors.snail.outline,
         strokeThickness: 5,
         resolution: 3,
@@ -336,6 +350,7 @@ export class MatchScene extends Phaser.Scene {
         count: ammo?.[id] ?? null,
         selected: id === m.weapon,
       })),
+      hide: m.phase !== 'aim' ? null : canHide(m) ? 'ready' : 'cooldown',
       winner: m.winner,
     };
     const json = JSON.stringify(state);
@@ -449,7 +464,7 @@ export class MatchScene extends Phaser.Scene {
     this.registry.set(
       DEBUG_INFO,
       `${where} · craters ${craters.length} · mask ${hash}\n` +
-        'A/D: crawl · W/space: jump · drag+release: shoot · 1/2/3: weapon · R: hills · M: map',
+        'A/D: crawl · W/space: jump · drag+release: shoot · 1/2/3: weapon · H: hide · R: hills · M: map',
     );
   }
 }

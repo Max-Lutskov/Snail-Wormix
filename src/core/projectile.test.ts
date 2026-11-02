@@ -16,6 +16,8 @@ const shooter: Snail = {
   grounded: true,
   alive: true,
   hp: 100,
+  shell: false,
+  shellCooldown: false,
 };
 
 /** Open sky, no wind: how far a full-power 45° shot lands from where it left. */

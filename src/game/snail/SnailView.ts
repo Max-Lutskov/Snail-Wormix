@@ -53,6 +53,7 @@ export class SnailView {
   private readonly art: Phaser.GameObjects.Container;
   private readonly foot: Phaser.GameObjects.Image;
   private readonly cannon: Phaser.GameObjects.Image;
+  private readonly helmet: Phaser.GameObjects.Image;
   private readonly stalks: Phaser.GameObjects.Image[];
   private readonly pupils: Phaser.GameObjects.Image[];
   private readonly hpText: Phaser.GameObjects.Text;
@@ -71,7 +72,7 @@ export class SnailView {
     this.stalks = T.eyestalkMounts.map((m) =>
       img('eyestalk', m.x, m.y).setOrigin(0.5, 0.913).setAngle(m.restAngleDeg),
     );
-    const helmet = img('helmet')
+    const helmet = (this.helmet = img('helmet'))
       .setOrigin(BODY_ORIGIN.x, BODY_ORIGIN.y)
       .setTint(hexToInt(teamColor(snail.team)));
     this.pupils = T.eyestalkMounts.map(() => img('pupil'));
@@ -126,7 +127,17 @@ export class SnailView {
     // Squash and stretch along the crawl; a stretch while flying.
     const squash = walking ? Math.sin(this.walkPhase) * 0.05 : 0;
     const stretch = snail.grounded ? 0 : Math.min(0.12, Math.abs(snail.vy) * 0.02);
-    this.foot.setScale((1 + squash) / SVG_SCALE, (1 - squash + stretch) / SVG_SCALE);
+    // Hiding (ART_SPEC.md, "Ховається"): the body pulls into the shell, the eyestalks go in,
+    // and the snail trembles.
+    const hid = snail.shell && snail.alive;
+    const pull = hid ? 0.55 : 1;
+    this.foot.setScale(
+      ((1 + squash) * (hid ? 0.8 : 1)) / SVG_SCALE,
+      ((1 - squash + stretch) * pull) / SVG_SCALE,
+    );
+    this.art.x = -ART_CENTER_X * ART_TO_WORLD + (hid ? Math.sin(time / 30) * 0.6 : 0);
+    // The helmet follows the head down (the head top is ~36 units up; it sinks with `pull`).
+    this.helmet.y = hid ? 36 * (1 - pull) : 0;
 
     // Rotation is applied after the facing flip, so the world slope angle works for both sides.
     const targetTilt = snail.grounded ? this.groundTilt(snail, mask) : 0;
@@ -150,6 +161,8 @@ export class SnailView {
       const stalk = this.stalks[i];
       const pupil = this.pupils[i];
       if (!stalk || !pupil) return;
+      stalk.setVisible(!hid);
+      pupil.setVisible(!hid);
       const spread = i === 0 ? -air : air;
       const angle = m.restAngleDeg + sway * (i === 0 ? 1 : -0.8) + bob + spread;
       stalk.setAngle(angle);

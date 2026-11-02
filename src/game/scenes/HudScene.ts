@@ -13,6 +13,8 @@ export const HUD_RESTART = 'hud:restart';
 /** Touch controls: the held crawl direction (-1, 0 or 1), and a jump tap. */
 export const HUD_MOVE = 'hud:move';
 export const HUD_JUMP = 'hud:jump';
+/** Hide in the shell instead of shooting. */
+export const HUD_HIDE = 'hud:hide';
 
 export interface HudState {
   readonly teams: readonly {
@@ -31,6 +33,8 @@ export interface HudState {
     readonly count: number | null;
     readonly selected: boolean;
   }[];
+  /** The shell button: usable, greyed out (hid last turn), or hidden (not aiming). */
+  readonly hide: 'ready' | 'cooldown' | null;
   /** Once over: the winning team, or -1 for a draw; null while playing. */
   readonly winner: number | null;
 }
@@ -199,8 +203,49 @@ export class HudScene extends Phaser.Scene {
       this.zones.push(zone);
     });
 
+    if (state.hide !== null) {
+      this.shellButton(INSET + 24 + state.weapons.length * (SLOT + 10) + 14, Hh, state.hide);
+    }
     if (this.touch && state.winner === null) this.controls(W, Hh);
     if (state.winner !== null) this.victory(W, Hh, state);
+  }
+
+  /** The shell slot: a spiral shell; taps hide the snail (ART_SPEC.md, "Ховається"). */
+  private shellButton(x: number, Hh: number, hide: 'ready' | 'cooldown'): void {
+    const g = this.g;
+    const y = Hh - INSET - 24 - SLOT;
+    const ready = hide === 'ready';
+    g.fillStyle(PANEL, H.panelOpacity).fillRoundedRect(x, y, SLOT, SLOT, 10);
+    g.lineStyle(3, ready ? ACCENT : PANEL, 1).strokeRoundedRect(x, y, SLOT, SLOT, 10);
+    const cx = x + SLOT / 2;
+    const cy = y + SLOT / 2 - 3;
+    const C = tokens.colors.snail;
+    const alpha = ready ? 1 : 0.35;
+    g.fillStyle(hexToInt(C.shell), alpha).fillCircle(cx, cy, 14);
+    g.lineStyle(2, OUTLINE, alpha).strokeCircle(cx, cy, 14);
+    g.lineStyle(2, hexToInt(C.shellSpiral), alpha);
+    g.beginPath();
+    for (let a = 0; a <= Math.PI * 4.2; a += 0.2) {
+      const r = 1.5 + a * 0.85;
+      const px = cx + Math.cos(a) * r;
+      const py = cy + Math.sin(a) * r;
+      if (a === 0) g.moveTo(px, py);
+      else g.lineTo(px, py);
+    }
+    g.strokePath();
+    this.text(x + 5, y + 3, 'H', 11, '#ffe14d');
+    const label = this.text(0, y + SLOT - 16, 'сховатись', 10);
+    label.setPosition(x + SLOT / 2 - label.width / 2, y + SLOT + 2);
+    if (!ready) return;
+    const zone = this.add.zone(x, y, SLOT, SLOT).setOrigin(0, 0).setInteractive();
+    zone.on(
+      'pointerdown',
+      (_p: Phaser.Input.Pointer, _x: number, _y: number, e: StoppableEvent) => {
+        e.stopPropagation();
+        this.game.events.emit(HUD_HIDE);
+      },
+    );
+    this.zones.push(zone);
   }
 
   private emitMove(): void {

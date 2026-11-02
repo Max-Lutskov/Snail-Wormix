@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   aimTicksLeft,
+  canHide,
   createMatch,
   NO_INPUT,
   stepMatch,
@@ -113,6 +114,51 @@ describe('turns', () => {
     expect(r.state.snails[1]?.alive).toBe(false);
     expect(r.state.winner).toBe(0);
     expect(r.events).toContainEqual({ kind: 'over', winner: 0 });
+  });
+});
+
+describe('hiding in the shell', () => {
+  const HIDE: MatchInput = { ...NO_INPUT, hide: true };
+
+  it('is the move of the turn: the turn passes at once', () => {
+    const { state, layout } = setup();
+    const r = stepMatch(state, HIDE, layout);
+    expect(r.events).toContainEqual({ kind: 'hide', snail: 0 });
+    expect(r.state.phase).toBe('settle');
+    expect(r.state.snails[0]?.shell).toBe(true);
+    const next = runUntil(r.state, layout, (s) => s.phase === 'aim');
+    expect(next.state.active).toBe(1);
+    expect(next.state.snails[0]?.shell).toBe(true);
+  });
+
+  it('halves the damage of a blast', () => {
+    const { state } = setup();
+    const hurt = (shell: boolean): number => {
+      const { layout: fresh } = setup();
+      const s: MatchState = {
+        ...state,
+        snails: state.snails.map((x, i) => (i === 0 ? { ...x, shell } : x)),
+      };
+      const r = runUntil(stepMatch(s, SHOOT_DOWN, fresh).state, fresh, (m) => m.phase !== 'flight');
+      return 100 - (r.state.snails[0]?.hp ?? 100);
+    };
+    const open = hurt(false);
+    expect(open).toBeGreaterThan(10);
+    expect(hurt(true)).toBe(Math.round(open * 0.5));
+  });
+
+  it('ends when its own turn starts, and cannot be used two turns in a row', () => {
+    const { state, layout } = setup();
+    let s = stepMatch(state, HIDE, layout).state;
+    // Red's turn runs out; green's turn starts out of the shell, but may not hide again.
+    s = runUntil(s, layout, (m) => m.active === 0 && m.phase === 'aim').state;
+    expect(s.snails[0]).toMatchObject({ shell: false, shellCooldown: true });
+    expect(canHide(s)).toBe(false);
+    expect(stepMatch(s, HIDE, layout).state.phase).toBe('aim');
+    // After a turn without hiding, it may hide again.
+    s = runUntil(s, layout, (m) => m.active === 1).state;
+    s = runUntil(s, layout, (m) => m.active === 0 && m.phase === 'aim').state;
+    expect(canHide(s)).toBe(true);
   });
 });
 

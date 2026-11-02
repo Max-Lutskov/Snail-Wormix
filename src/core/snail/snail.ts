@@ -1,6 +1,7 @@
 /**
  * Snail movement on the terrain mask: crawling with small step-ups and step-downs, a forward
- * jump, gravity, wall bounces, knockback from explosions, health and drowning.
+ * jump, gravity, wall bounces, knockback from explosions, health, hiding in the shell and
+ * drowning.
  *
  * Fixed step: one call of stepSnail is one tick (1/60 s), velocities are in px per tick.
  * The snail is a box standing on its feet point (x, y): it covers columns
@@ -38,6 +39,8 @@ export const SNAIL = {
   knockback: 7,
   knockbackReach: 20,
   maxHp: 100,
+  /** In the shell, blasts do this share of their damage and knockback. */
+  shellFactor: 0.5,
 } as const;
 
 export interface Snail {
@@ -50,6 +53,10 @@ export interface Snail {
   readonly facing: 1 | -1;
   readonly grounded: boolean;
   readonly alive: boolean;
+  /** Hiding in its shell (until its next turn starts): blasts hurt and push it less. */
+  readonly shell: boolean;
+  /** Hid on its last turn, so it can't hide on this one (no hiding twice in a row). */
+  readonly shellCooldown: boolean;
   /** 0 when dead. */
   readonly hp: number;
 }
@@ -103,6 +110,8 @@ export function spawnSnail(id: number, team: number, x: number, world: SnailWorl
     grounded,
     alive: true,
     hp: SNAIL.maxHp,
+    shell: false,
+    shellCooldown: false,
   };
 }
 
@@ -195,6 +204,7 @@ function land(snail: Snail, x: number, y: number, mask: TerrainMask): Snail {
  * `knockbackReach` beyond its rim. Snails out of reach are returned unchanged.
  */
 export function applyExplosion(snail: Snail, crater: Crater): Snail {
+  const strength = snail.shell ? SNAIL.shellFactor : 1;
   if (!snail.alive) return snail;
   const cx = snail.x;
   const cy = snail.y - SNAIL.height / 2;
@@ -203,7 +213,7 @@ export function applyExplosion(snail: Snail, crater: Crater): Snail {
   const d = Math.sqrt(dx * dx + dy * dy);
   const reach = crater.r + SNAIL.knockbackReach;
   if (d >= reach) return snail;
-  const k = SNAIL.knockback * (1 - d / reach);
+  const k = SNAIL.knockback * strength * (1 - d / reach);
   // Straight up when the blast is right at the snail; always with a little lift.
   const ux = d > 0.001 ? dx / d : 0;
   const uy = d > 0.001 ? dy / d : -1;

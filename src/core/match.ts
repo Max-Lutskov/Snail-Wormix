@@ -2,7 +2,8 @@
  * A match: snails take turns, one shot each, until one team is left.
  *
  * Turn flow (all in ticks, 60 per second):
- *   aim     the active snail crawls, jumps and may fire once; ends at the turn timer
+ *   aim     the active snail crawls, jumps and may fire once or hide in its shell (which
+ *           ends the turn at once); ends at the turn timer
  *   flight  the shot flies; nobody moves on purpose
  *   retreat a few seconds for the shooter to crawl away
  *   settle  everyone falls and lands; then the next team's snail gets the turn
@@ -65,12 +66,21 @@ export interface MatchInput extends SnailInput {
   /** Fire now: direction (radians, screen coords) and pull in [0, 1]. */
   readonly fire: { readonly angle: number; readonly power: number } | null;
   readonly weapon: WeaponId | null;
+  /** Hide in the shell instead of shooting. */
+  readonly hide: boolean;
 }
 
-export const NO_INPUT: MatchInput = { move: 0, jump: false, fire: null, weapon: null };
+export const NO_INPUT: MatchInput = {
+  move: 0,
+  jump: false,
+  fire: null,
+  weapon: null,
+  hide: false,
+};
 
 export type MatchEvent =
   | { readonly kind: 'fire'; readonly snail: number }
+  | { readonly kind: 'hide'; readonly snail: number }
   | {
       readonly kind: 'explosion';
       readonly crater: Crater;
@@ -172,7 +182,8 @@ export function stepMatch(
     ),
   };
 
-  if (s.phase === 'aim' && input.fire !== null) s = fire(s, input.fire, events);
+  if (s.phase === 'aim' && input.hide) s = hide(s, events);
+  else if (s.phase === 'aim' && input.fire !== null) s = fire(s, input.fire, events);
   else if (s.phase === 'flight' && s.projectile) s = fly(s, s.projectile, layout, events);
 
   for (const [i, snail] of s.snails.entries()) {
@@ -182,6 +193,22 @@ export function stepMatch(
   }
 
   return { state: advancePhase(s, events), events };
+}
+
+/** Whether the active snail may hide in its shell now. */
+export function canHide(s: MatchState): boolean {
+  const snail = s.snails[s.active];
+  return s.phase === 'aim' && snail?.alive === true && snail.grounded && !snail.shellCooldown;
+}
+
+/** The active snail hides in its shell: that is its move, the turn passes. */
+function hide(s: MatchState, events: MatchEvent[]): MatchState {
+  if (!canHide(s)) return s;
+  events.push({ kind: 'hide', snail: s.snails[s.active]?.id ?? 0 });
+  return settle({
+    ...s,
+    snails: s.snails.map((x, i) => (i === s.active ? { ...x, shell: true } : x)),
+  });
 }
 
 function fire(
@@ -252,7 +279,8 @@ function fly(
     const dx = snail.x - crater.x;
     const dy = snail.y - SNAIL.height / 2 - crater.y;
     const d = Math.sqrt(dx * dx + dy * dy);
-    const amount = d < reach ? Math.round(weapon.damage * (1 - d / reach)) : 0;
+    const full = d < reach ? weapon.damage * (1 - d / reach) : 0;
+    const amount = Math.round(snail.shell ? full * SNAIL.shellFactor : full);
     if (amount > 0 && snail.alive) events.push({ kind: 'damage', snail: snail.id, amount });
     return damageSnail(applyExplosion(snail, crater), amount);
   });
@@ -302,8 +330,14 @@ function nextTurn(s: MatchState, events: MatchEvent[]): MatchState {
   const nextTeam = s.snails[next]?.team ?? 0;
   const ammo = s.ammo[nextTeam];
   events.push({ kind: 'turn', active: next });
+  // The snail that just moved may hide next time only if it didn't hide now; the one whose
+  // turn starts comes out of its shell.
+  const snails = s.snails.map((x, i) =>
+    i === next ? { ...x, shell: false } : i === s.active ? { ...x, shellCooldown: x.shell } : x,
+  );
   return {
     ...s,
+    snails,
     active: next,
     phase: 'aim',
     phaseTicks: 0,
