@@ -77,7 +77,7 @@ export class MatchScene extends Phaser.Scene {
       this.scale.off(Phaser.Scale.Events.RESIZE, this.fitCamera);
     });
 
-    this.loadTerrain({ kind: 'hills', seed: 1 });
+    this.loadTerrain(this.startSource());
 
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       const shift = (pointer.event as MouseEvent | undefined)?.shiftKey === true;
@@ -135,6 +135,12 @@ export class MatchScene extends Phaser.Scene {
     if (!ctx) throw new Error('MatchScene: no 2D context for the soil tile');
     ctx.drawImage(source, 0, 0, size, size);
     return { size, pixels: ctx.getImageData(0, 0, size, size).data };
+  }
+
+  /** Hills, or a drawn map picked with ?map=<id> in the URL (e.g. ?map=bridge). */
+  private startSource(): TerrainSource {
+    const id = new URLSearchParams(window.location.search).get('map');
+    return id !== null && this.maps.has(id) ? { kind: 'map', id } : { kind: 'hills', seed: 1 };
   }
 
   /** Cycles hills → each drawn map → hills. */
