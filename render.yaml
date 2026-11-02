@@ -1,0 +1,13 @@
+# Render Blueprint: the game and its room server as one Node web service (docs/online.md).
+# The free plan sleeps after ~15 min without traffic; the first visit then takes ~30-50 s.
+services:
+  - type: web
+    name: snail-artillery
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm run server
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: 22.12.0

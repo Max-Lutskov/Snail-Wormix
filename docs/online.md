@@ -34,6 +34,9 @@ npm run build
 PORT=8080 npm run server
 ```
 
-На Fly.io / Render: команда збірки `npm ci && npm run build`, команда старту `npm run server`,
+**Render** (як зараз): [`render.yaml`](../render.yaml) — Blueprint. У дашборді Render:
+New → Blueprint → репозиторій `Snail-Wormix` → Apply. Далі кожен push у `main` деплоїться сам.
+
+На інших (Fly.io тощо): команда збірки `npm ci && npm run build`, команда старту `npm run server`,
 порт з `PORT`. Кімнати живуть у пам'яті одного процесу, тож потрібен один екземпляр
 (без горизонтального масштабування), а перезапуск обриває поточні матчі.
