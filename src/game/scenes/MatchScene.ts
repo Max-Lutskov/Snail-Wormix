@@ -4,13 +4,16 @@ import {
   canHide,
   createMatch,
   matchChecksum,
+  NO_INPUT,
   TURN,
   stepMatch,
   type MatchEvent,
   type MatchInput,
   type MatchState,
 } from '../../core/match';
+import { planMove, type BotLevel, type BotMove } from '../../core/bot';
 import { MAX_WIND, type ShotWorld } from '../../core/projectile';
+import { seedRng, type RngState } from '../../core/rng';
 import { SNAIL } from '../../core/snail/snail';
 import { checksum } from '../../core/terrain/mask';
 import type { TerrainLayout } from '../../core/terrain/layout';
@@ -79,6 +82,12 @@ const WEAPON_KEYS = ['ONE', 'TWO', 'THREE', 'FOUR'] as const;
  */
 const MIN_CSS_PER_WORLD_PX = 0.85;
 
+/** The bot "thinks" this long into its turn, then shows its aim for AIM ticks, then fires. */
+const BOT_THINK_TICKS = 60;
+const BOT_AIM_TICKS = 45;
+/** The bot plays this team. */
+const BOT_TEAM = 1;
+
 /** Online: when the client is this many ticks behind the server, it catches up at once. */
 const NET_CATCH_UP = 8;
 
@@ -129,6 +138,15 @@ export class MatchScene extends Phaser.Scene {
   /** Emotions that last a moment after an event, by snail id: until when (scene time, ms). */
   private joyUntil = new Map<number, number>();
   private angryUntil = new Map<number, number>();
+  /** Against the computer: its level, its RNG, and its move for the current turn. */
+  private bot: {
+    level: BotLevel;
+    rng: RngState;
+    turn: number;
+    move: BotMove | null;
+    /** The aim angle being shown while it "aims". */
+    aim: number | null;
+  } | null = null;
   /** The start menu (mode, then map); the map behind it stays still. */
   private menu!: Menu;
 
@@ -172,8 +190,8 @@ export class MatchScene extends Phaser.Scene {
         this.act({ fire: toVector(aim) });
       },
     );
-    this.menu = new Menu(this.mapChoices(), (mode, choice) => {
-      this.pick(mode, choice);
+    this.menu = new Menu(this.mapChoices(), (mode, choice, level) => {
+      this.pick(mode, choice, level);
     });
     // ?room=CODE joins a friend's room at once; ?map=<id> plays it on one device (dev);
     // otherwise the menu opens over a map.
@@ -273,7 +291,10 @@ export class MatchScene extends Phaser.Scene {
     this.match.snails.forEach((s, i) =>
       this.snailViews[i]?.update(s, this.layout.mask, time, {
         active: i === this.match.active && this.match.phase !== 'over',
-        aim: i === this.match.active && aim ? aim.angle : null,
+        aim:
+          i === this.match.active
+            ? (aim?.angle ?? (this.botsTurn() ? (this.bot?.aim ?? null) : null))
+            : null,
         mood: this.moodOf(i, aim !== null, time),
       }),
     );
@@ -292,10 +313,52 @@ export class MatchScene extends Phaser.Scene {
     this.tickCarry = Math.min(this.tickCarry + delta, TICK_MS * MAX_TICKS_PER_FRAME);
     while (this.tickCarry >= TICK_MS) {
       this.tickCarry -= TICK_MS;
-      const input: MatchInput = { move, ...this.queued };
+      const input: MatchInput = this.botsTurn() ? this.botInput() : { move, ...this.queued };
       this.queued = { jump: false, fire: null, weapon: null, hide: false };
       this.applyStep(input);
     }
+  }
+
+  private botsTurn(): boolean {
+    return this.bot !== null && this.match.snails[this.match.active]?.team === BOT_TEAM;
+  }
+
+  /**
+   * The bot's input this tick: it waits a moment, decides (core/bot), turns its cannon
+   * toward the shot for a moment so you see it aim, then fires; or hides in its shell.
+   */
+  private botInput(): MatchInput {
+    const bot = this.bot;
+    const m = this.match;
+    if (!bot || m.phase !== 'aim') {
+      if (bot) bot.aim = null;
+      return NO_INPUT;
+    }
+    if (bot.turn !== m.turn) {
+      bot.turn = m.turn;
+      bot.move = null;
+      bot.aim = null;
+    }
+    const t = m.phaseTicks;
+    if (t < BOT_THINK_TICKS) return NO_INPUT;
+    if (!bot.move) {
+      const plan = planMove(m, this.layout, bot.level, bot.rng);
+      bot.rng = plan.rng;
+      bot.move = plan.move;
+      if (plan.move.kind === 'hide') return { ...NO_INPUT, hide: true };
+      return { ...NO_INPUT, weapon: plan.move.weapon };
+    }
+    const move = bot.move;
+    if (move.kind !== 'shoot') return NO_INPUT;
+    const target = Math.atan2(move.aim.y, move.aim.x);
+    const k = Math.min(1, (t - BOT_THINK_TICKS) / BOT_AIM_TICKS);
+    // Swing the cannon from its rest pose (up and forward) to the shot.
+    const facing = this.match.snails[m.active]?.facing ?? 1;
+    const rest = facing === 1 ? -0.95 : Math.PI + 0.95;
+    bot.aim = rest + (target - rest) * (1 - (1 - k) * (1 - k));
+    if (k < 1) return NO_INPUT;
+    bot.aim = null;
+    return { ...NO_INPUT, fire: move.aim };
   }
 
   /**
@@ -345,9 +408,9 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  /** Whether the local player controls the active snail (always, on one device). */
+  /** Whether the local player controls the active snail (on one device, unless it's the bot's). */
   private myTurn(): boolean {
-    if (!this.online) return true;
+    if (!this.online) return !this.botsTurn();
     return this.online.started && this.match.snails[this.match.active]?.team === this.online.seat;
   }
 
@@ -383,12 +446,22 @@ export class MatchScene extends Phaser.Scene {
     return [...drawn, { source: 'hills', name: 'Пагорби (випадкові)', thumb: hillsThumbnail(1) }];
   }
 
-  /** A choice from the menu: a match on one device, or a room to invite a friend to. */
-  private pick(mode: GameMode, choice: TerrainSource | 'hills'): void {
+  /** A choice from the menu: on one device, against the bot, or a room to invite a friend. */
+  private pick(mode: GameMode, choice: TerrainSource | 'hills', level: BotLevel): void {
     const source: TerrainSource =
       choice === 'hills' ? { kind: 'hills', seed: Math.floor(Math.random() * 1_000_000) } : choice;
     this.overview = false;
     this.fitCamera();
+    this.bot =
+      mode === 'bot'
+        ? {
+            level,
+            rng: seedRng(Math.floor(Math.random() * 2 ** 31)),
+            turn: -1,
+            move: null,
+            aim: null,
+          }
+        : null;
     this.loadTerrain(source);
     if (mode === 'online') this.goOnline(null, source);
   }
@@ -397,6 +470,7 @@ export class MatchScene extends Phaser.Scene {
   private openMenu(): void {
     this.online?.close();
     this.online = null;
+    this.bot = null;
     this.slingshot.cancel();
     this.hudJson = '';
     this.menu.show();
@@ -560,7 +634,9 @@ export class MatchScene extends Phaser.Scene {
     const ammo = m.ammo[team];
     const state: HudState = {
       teams: m.snails.map((s) => ({
-        name: TEAM_NAMES[s.team] ?? `Команда ${s.team + 1}`,
+        name:
+          (TEAM_NAMES[s.team] ?? `Команда ${s.team + 1}`) +
+          (this.bot && s.team === BOT_TEAM ? ' (бот)' : ''),
         color: teamColor(s.team),
         hp: s.hp,
         maxHp: SNAIL.maxHp,

@@ -3,10 +3,11 @@
  * screen). Step 1 picks the mode, step 2 the map; picking a map starts the game.
  */
 
+import type { BotLevel } from '../../core/bot';
 import type { TerrainSource } from '../../core/terrain/state';
 import { tokens } from '../art/tokens';
 
-export type GameMode = 'local' | 'online';
+export type GameMode = 'local' | 'bot' | 'online';
 
 export interface MapChoice {
   /** What to load; hills get a fresh seed when picked. */
@@ -41,6 +42,9 @@ const CSS = `
 .menu-map:hover, .menu-map:focus-visible { border-color: ${H.accent}; outline: none; }
 .menu-map canvas { display: block; width: 100%; aspect-ratio: 20 / 9; border-radius: 12px; }
 .menu-map span { display: block; margin-top: 6px; font-weight: bold; font-size: 15px; }
+.menu-levels { display: flex; gap: 8px; justify-content: center; margin: 0 0 clamp(10px, 2.5vh, 18px); }
+.menu-level { background: #22302a; color: #fff; padding: 8px 16px; border-color: #3a4a3e; }
+.menu-level[aria-pressed='true'] { background: ${H.accent}; color: ${H.panel}; border-color: ${tokens.colors.snail.outline}; }
 .menu-back { margin-top: clamp(10px, 2.5vh, 18px); background: transparent; color: #fff;
   padding: 8px 18px; border-color: #3a4a3e; }
 `;
@@ -50,7 +54,11 @@ export class Menu {
 
   constructor(
     private readonly maps: readonly MapChoice[],
-    private readonly onPick: (mode: GameMode, source: TerrainSource | 'hills') => void,
+    private readonly onPick: (
+      mode: GameMode,
+      source: TerrainSource | 'hills',
+      level: BotLevel,
+    ) => void,
   ) {
     if (!document.getElementById('menu-css')) {
       const style = document.createElement('style');
@@ -104,6 +112,7 @@ export class Menu {
       });
       row.append(b);
     };
+    mode('bot', 'Грати з ботом', 'ти проти комп’ютера');
     mode('local', 'Грати вдвох', 'на одному пристрої, по черзі');
     mode('online', 'Грати з другом', 'за посиланням, кожен на своєму');
     panel.append(row);
@@ -114,6 +123,32 @@ export class Menu {
     const title = document.createElement('h2');
     title.textContent = 'Обери мапу';
     panel.append(title);
+    let level: BotLevel = 'normal';
+    if (mode === 'bot') {
+      // Bot difficulty: easy misses often, hard rarely.
+      const row = document.createElement('div');
+      row.className = 'menu-levels';
+      const levels: [BotLevel, string][] = [
+        ['easy', 'Легкий'],
+        ['normal', 'Нормальний'],
+        ['hard', 'Складний'],
+      ];
+      const buttons = levels.map(([id, label]) => {
+        const b = document.createElement('button');
+        b.className = 'menu-level';
+        b.textContent = label;
+        b.setAttribute('aria-pressed', String(id === level));
+        b.addEventListener('click', () => {
+          level = id;
+          for (const [i, other] of buttons.entries()) {
+            other.setAttribute('aria-pressed', String(levels[i]?.[0] === id));
+          }
+        });
+        row.append(b);
+        return b;
+      });
+      panel.append(row);
+    }
     const grid = document.createElement('div');
     grid.className = 'menu-maps';
     for (const m of this.maps) {
@@ -124,7 +159,7 @@ export class Menu {
       b.append(m.thumb, name);
       b.addEventListener('click', () => {
         this.hide();
-        this.onPick(mode, m.source);
+        this.onPick(mode, m.source, level);
       });
       grid.append(b);
     }
