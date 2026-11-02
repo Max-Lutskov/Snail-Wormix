@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { checksum, isSolid } from './mask';
 import { ALPHA_SOLID, parseMapMeta, terrainFromMap, type MapData, type MapMeta } from './map';
 import { addCrater, buildTerrain, createTerrainState, type TerrainState } from './state';
+import { ART_SCALE } from '../world';
 
 const W = 40;
 const H = 20;
+const AW = W * ART_SCALE;
 
 function meta(overrides: Partial<MapMeta> = {}): MapMeta {
   return {
@@ -18,11 +20,20 @@ function meta(overrides: Partial<MapMeta> = {}): MapMeta {
   };
 }
 
-/** Ground below y = 10 everywhere, plus a floating 4×2 block at (18..21, 3..4). */
+/** Sets every art pixel of world pixel (x, y) to `value`. */
+function fill(a: Uint8Array, x: number, y: number, value: number): void {
+  for (let dy = 0; dy < ART_SCALE; dy++) {
+    for (let dx = 0; dx < ART_SCALE; dx++) {
+      a[(y * ART_SCALE + dy) * AW + x * ART_SCALE + dx] = value;
+    }
+  }
+}
+
+/** Art-scale alpha: ground below y = 10 everywhere, plus a floating 4×2 block at (18..21, 3..4). */
 function alpha(): Uint8Array {
-  const a = new Uint8Array(W * H);
-  for (let y = 10; y < H; y++) for (let x = 0; x < W; x++) a[y * W + x] = 255;
-  for (let y = 3; y < 5; y++) for (let x = 18; x < 22; x++) a[y * W + x] = 200;
+  const a = new Uint8Array(AW * H * ART_SCALE);
+  for (let y = 10; y < H; y++) for (let x = 0; x < W; x++) fill(a, x, y, 255);
+  for (let y = 3; y < 5; y++) for (let x = 18; x < 22; x++) fill(a, x, y, 200);
   return a;
 }
 
@@ -47,13 +58,23 @@ describe('parseMapMeta', () => {
 });
 
 describe('terrainFromMap', () => {
-  it('makes pixels with alpha >= 128 solid', () => {
+  it('makes world pixels whose art pixels average alpha >= 128 solid', () => {
     const a = alpha();
-    a[0] = ALPHA_SOLID;
-    a[1] = ALPHA_SOLID - 1;
+    fill(a, 0, 0, ALPHA_SOLID);
+    fill(a, 1, 0, ALPHA_SOLID - 1);
+    // A block averaging exactly 128 is solid, one alpha unit less is not.
+    const block = (x: number, values: readonly number[]): void => {
+      values.forEach((v, k) => {
+        a[(k >> 1) * AW + x * ART_SCALE + (k & 1)] = v;
+      });
+    };
+    block(4, [255, 255, 1, 1]);
+    block(6, [255, 255, 1, 0]);
     const { mask } = terrainFromMap(map({ alpha: a }));
     expect(isSolid(mask, 0, 0)).toBe(true);
     expect(isSolid(mask, 1, 0)).toBe(false);
+    expect(isSolid(mask, 4, 0)).toBe(true);
+    expect(isSolid(mask, 6, 0)).toBe(false);
     expect(isSolid(mask, 19, 3)).toBe(true);
     expect(isSolid(mask, 19, 6)).toBe(false);
     expect(isSolid(mask, 30, 15)).toBe(true);
@@ -80,7 +101,7 @@ describe('terrainFromMap', () => {
       /spawn/,
     );
     const a = alpha();
-    for (let y = 0; y < H; y++) a[y * W + 35] = 0;
+    for (let y = 0; y < H; y++) fill(a, 35, y, 0);
     expect(() => terrainFromMap(map({ alpha: a }))).toThrow(/spawn/);
   });
 

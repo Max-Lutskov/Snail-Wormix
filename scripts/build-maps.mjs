@@ -1,4 +1,5 @@
-// Rasterizes drawn maps: public/maps/<id>/terrain.svg (+ optional back.svg) -> PNG.
+// Rasterizes drawn maps: public/maps/<id>/terrain.svg (+ optional back.svg) -> PNG at ART_SCALE
+// px per world unit (the SVGs are drawn in world units, map.json width x height).
 //
 // The PNG is the canonical map file: the game (and later the server) builds the terrain mask
 // from its alpha channel, so it must come from one deterministic renderer (resvg), not from
@@ -12,18 +13,21 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from '
 import { join } from 'node:path';
 
 const MAPS_DIR = 'public/maps';
+/** Same as ART_SCALE in src/core/world.ts. */
+const ART_SCALE = 2;
 
 function render(svgPath, pngPath, width, height) {
   const svg = readFileSync(svgPath, 'utf8');
   const resvg = new Resvg(svg, {
-    fitTo: { mode: 'original' },
+    fitTo: { mode: 'zoom', value: ART_SCALE },
     font: { loadSystemFonts: false },
     shapeRendering: 2, // geometricPrecision: anti-aliased edges
   });
   const image = resvg.render();
-  if (image.width !== width || image.height !== height) {
+  if (image.width !== width * ART_SCALE || image.height !== height * ART_SCALE) {
     throw new Error(
-      `${svgPath}: rendered ${image.width}x${image.height}, map.json says ${width}x${height}`,
+      `${svgPath}: rendered ${image.width}x${image.height} at ${ART_SCALE}x, ` +
+        `map.json says ${width}x${height}`,
     );
   }
   const png = image.asPng();

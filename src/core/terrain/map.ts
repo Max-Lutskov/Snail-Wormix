@@ -1,13 +1,15 @@
 /**
  * Drawn maps. A map is public/maps/<id>/terrain.png (opaque = ground) plus map.json.
- * The PNG is decoded outside core (browser canvas, or a PNG library on the server); core only
- * sees its alpha channel, so every client and the server build the same mask.
+ * The PNG is art, ART_SCALE px per world unit; it is decoded outside core (browser canvas, or a
+ * PNG library on the server) and core only sees its alpha channel, downsampled with integer
+ * math, so every client and the server build the same mask from the same file.
  */
 
+import { ART_SCALE } from '../world';
 import type { TerrainLayout } from './layout';
 import { createMask, surfaceY } from './mask';
 
-/** Pixels with alpha at or above this are ground. */
+/** A world pixel is ground when the mean alpha of its ART_SCALE² art pixels is at least this. */
 export const ALPHA_SOLID = 128;
 
 export interface MapMeta {
@@ -22,7 +24,7 @@ export interface MapMeta {
 
 export interface MapData {
   readonly meta: MapMeta;
-  /** One alpha value (0..255) per pixel, row-major, width × height. */
+  /** One alpha value (0..255) per art pixel, row-major, (width × ART_SCALE) × (height × ART_SCALE). */
   readonly alpha: Uint8Array;
 }
 
@@ -65,14 +67,25 @@ export function parseMapMeta(json: unknown): MapMeta {
 /** Builds terrain from a map's alpha channel, validating that the map is playable. */
 export function terrainFromMap({ meta, alpha }: MapData): TerrainLayout {
   const { id, width, height, waterLevel, spawns } = meta;
-  if (alpha.length !== width * height) {
-    fail(id, `alpha size ${alpha.length} does not match ${width}x${height}`);
+  const artWidth = width * ART_SCALE;
+  if (alpha.length !== artWidth * height * ART_SCALE) {
+    fail(id, `alpha size ${alpha.length} does not match ${width}x${height} at ${ART_SCALE}x`);
   }
   if (!(waterLevel > 0 && waterLevel <= height)) fail(id, `water level ${waterLevel} is outside`);
   if (spawns.length < 2) fail(id, 'needs at least 2 spawns');
 
   const mask = createMask(width, height);
-  for (let i = 0; i < alpha.length; i++) mask.data[i] = (alpha[i] ?? 0) >= ALPHA_SOLID ? 1 : 0;
+  const threshold = ALPHA_SOLID * ART_SCALE * ART_SCALE;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let sum = 0;
+      for (let dy = 0; dy < ART_SCALE; dy++) {
+        const row = (y * ART_SCALE + dy) * artWidth + x * ART_SCALE;
+        for (let dx = 0; dx < ART_SCALE; dx++) sum += alpha[row + dx] ?? 0;
+      }
+      mask.data[y * width + x] = sum >= threshold ? 1 : 0;
+    }
+  }
 
   for (const { x } of spawns) {
     if (!(x >= 0 && x < width)) fail(id, `spawn x=${x} is outside the world`);

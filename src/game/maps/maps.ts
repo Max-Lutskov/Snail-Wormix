@@ -5,6 +5,7 @@
 
 import type Phaser from 'phaser';
 import { parseMapMeta, type MapData, type MapLookup } from '../../core/terrain/map';
+import { ART_SCALE } from '../../core/world';
 import type { Rgba } from '../terrain/terrainArt';
 
 const INDEX_KEY = 'maps-index';
@@ -16,7 +17,7 @@ interface IndexEntry {
 
 export interface LoadedMap {
   readonly data: MapData;
-  /** The terrain PNG's pixels, used as the map's base art. */
+  /** The terrain PNG's pixels (ART_SCALE px per world unit), used as the map's base art. */
   readonly rgba: Rgba;
   /** Texture key of the non-solid background layer, if the map has one. */
   readonly backKey: string | null;
@@ -71,8 +72,13 @@ export function readMaps(scene: Phaser.Scene): Map<string, LoadedMap> {
     try {
       if (!scene.textures.exists(terrainKey(id))) throw new Error('terrain.png did not load');
       const meta = parseMapMeta(scene.cache.json.get(metaKey(id)));
-      const rgba = readPixels(scene, terrainKey(id), meta.width, meta.height);
-      const alpha = new Uint8Array(meta.width * meta.height);
+      const rgba = readPixels(
+        scene,
+        terrainKey(id),
+        meta.width * ART_SCALE,
+        meta.height * ART_SCALE,
+      );
+      const alpha = new Uint8Array(rgba.length / 4);
       for (let i = 0; i < alpha.length; i++) alpha[i] = rgba[i * 4 + 3] ?? 0;
       maps.set(id, {
         data: { meta, alpha },

@@ -10,7 +10,7 @@ import {
   type TerrainSource,
   type TerrainState,
 } from '../../core/terrain/state';
-import { WORLD_HEIGHT, WORLD_WIDTH } from '../../core/world';
+import { ART_SCALE, WORLD_HEIGHT, WORLD_WIDTH } from '../../core/world';
 import { tokens } from '../art/tokens';
 import { worldZoom } from '../display';
 import { createParallax, createSky } from '../env/sky';
@@ -53,7 +53,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   preload(): void {
-    const size = tokens.terrain.soilTileSize;
+    const size = tokens.terrain.soilTileSize * ART_SCALE;
     this.load.svg(SOIL_TILE_KEY, 'art/soil-tile.svg', { width: size, height: size });
     this.load.svg(MUSHROOM_TEXTURE, 'art/mushroom.svg', { scale: MUSHROOM_SVG_SCALE });
     preloadMaps(this);
@@ -126,7 +126,7 @@ export class MatchScene extends Phaser.Scene {
   };
 
   private readSoilTile(): SoilTile {
-    const size = tokens.terrain.soilTileSize;
+    const size = tokens.terrain.soilTileSize * ART_SCALE;
     const source = this.textures.get(SOIL_TILE_KEY).getSourceImage() as CanvasImageSource;
     const canvas = document.createElement('canvas');
     canvas.width = size;
@@ -156,13 +156,24 @@ export class MatchScene extends Phaser.Scene {
     this.state = createTerrainState(source);
     this.layout = buildTerrain(this.state, lookup);
     const map = source.kind === 'map' ? this.maps.get(source.id) : undefined;
-    const baseArt = map
-      ? map.rgba
-      : paintGardenArt(buildBaseTerrain(source, lookup), this.soilTile);
+    const original = buildBaseTerrain(source, lookup);
+    const baseArt = map ? map.rgba : paintGardenArt(original, this.soilTile);
 
-    if (map?.backKey) this.back = this.add.image(0, 0, map.backKey).setOrigin(0, 0).setDepth(-1);
-    this.view = new TerrainView(this, baseArt, this.layout, this.state.craters);
-    this.view.gameObject.setDepth(0);
+    if (map?.backKey) {
+      this.back = this.add
+        .image(0, 0, map.backKey)
+        .setOrigin(0, 0)
+        .setScale(1 / ART_SCALE)
+        .setDepth(-1);
+    }
+    this.view = new TerrainView(
+      this,
+      baseArt,
+      original,
+      this.layout,
+      this.state.craters,
+      map !== undefined,
+    ).setDepth(0);
     this.decor = new DecorView(this, this.layout);
     this.water.setLevel(this.layout.waterLevel);
     this.updateInfo();

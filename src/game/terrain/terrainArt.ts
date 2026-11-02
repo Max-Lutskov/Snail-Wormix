@@ -1,11 +1,13 @@
 /**
  * Pixel art for the terrain, following docs/art/ART_SPEC.md ("Сад і город").
  *
- * Buffers, all world-sized:
- * - base: the untouched ground look (soil tile, moss), painted once from the pre-crater terrain;
- * - burn: 0..255 scorch intensity around craters, accumulated with max();
- * - the visible texture = base blended toward the burn color, with anti-aliased edges, and
- *   transparent where there is no ground (holes show the sky and parallax behind).
+ * The art is ART_SCALE px per world unit; the mask (physics) stays 1 px per unit. Buffers:
+ * - base (art-sized): the untouched ground look (soil tile, moss), painted once from the
+ *   pre-crater terrain, or a drawn map's PNG;
+ * - burn (world-sized): 0..255 scorch intensity around craters, accumulated with max();
+ * - edge field (world-sized, see edgeField.ts): signed distance to the ground/air boundary.
+ * The visible texture = base, lightened along fresh cuts, faintly scorched, with a dark contour
+ * along the boundary and anti-aliased edges; transparent where there is no ground.
  *
  * Decor (mushrooms, dew, grass) is not painted here: DecorView draws it as vector sprites.
  */
@@ -14,12 +16,15 @@ import { mossBumpLift } from '../../core/terrain/hills';
 import type { TerrainLayout } from '../../core/terrain/layout';
 import type { PixelRect, TerrainMask } from '../../core/terrain/mask';
 import type { Crater } from '../../core/terrain/state';
+import { ART_SCALE } from '../../core/world';
 import { hexToRgb, tokens, type Rgb } from '../art/tokens';
+import type { EdgeField } from './edgeField';
 
 /** RGBA pixels, same layout as ImageData.data. */
 export type Rgba = Uint8ClampedArray;
 
 export interface SoilTile {
+  /** Side in art px. */
   readonly size: number;
   readonly pixels: Rgba;
 }
@@ -37,10 +42,16 @@ const FUZZ_RGB = hexToRgb(C.moss.fuzz);
 const WARM_RGB = hexToRgb(C.moss.warm);
 const COOL_RGB = hexToRgb(C.moss.cool);
 const BURN_RGB = hexToRgb(C.crater.burn);
+const OUTLINE_RGB = hexToRgb(T.outline.color);
+/** Contour and fresh-cut lip widths, world px. */
+const OUTLINE = T.outline.width;
+const LIP = T.freshCut.width;
 /** Depth (px below the surface) at which soil reaches its darkest shade. */
 const DARKEST_DEPTH = 420;
 /** Half-width of the window used to smooth the surface before measuring its slope. */
 const SLOPE_SMOOTH = 12;
+/** Surface step (world px) between neighbouring columns above which it is a cliff, not a slope. */
+const CLIFF = 3;
 
 /** Cheap stable integer hash → [0, 1) (render-only). */
 function hash2(x: number, y: number): number {
@@ -80,7 +91,7 @@ function varyMoss(rgb: Rgb, v: number): Rgb {
 }
 
 /**
- * Soil from the 80×80 tile, using one of its 8 flips/rotations per tile-sized block so the
+ * Soil from the tile (art px), using one of its 8 flips/rotations per tile-sized block so the
  * grid disappears without cutting details at block seams (the tile keeps details off its edges).
  */
 function soilTexel(tile: SoilTile, x: number, y: number): number {
@@ -101,10 +112,14 @@ export function decorOwnership(layout: TerrainLayout): Uint8Array {
   return owned;
 }
 
-/** Ground art for generated terrain: varied soil tile with moss along the surface. */
+/**
+ * Ground art for generated terrain, art-sized: varied soil tile with moss along the surface.
+ * Moss bands start under the contour, which covers the first `outline.width` px.
+ */
 export function paintGardenArt(layout: TerrainLayout, tile: SoilTile): Rgba {
   const { width, height, data } = layout.mask;
-  const out = new Uint8ClampedArray(width * height * 4);
+  const artWidth = width * ART_SCALE;
+  const out = new Uint8ClampedArray(artWidth * height * ART_SCALE * 4);
   const owned = decorOwnership(layout);
   const { lift, owner } = mossBumpLift(width, layout.mossBumps);
 
@@ -134,9 +149,24 @@ export function paintGardenArt(layout: TerrainLayout, tile: SoilTile): Rgba {
   const soilShadeRange = 1 - T.depthDarkenMin;
   const grainAmount = T.soilGrain;
 
-  for (let x = 0; x < width; x++) {
+  // Surface height at art column u, interpolated between world columns so band edges slope
+  // smoothly instead of stepping every world px (but not across cliffs).
+  const surfaceAt = (values: ArrayLike<number>, u: number): number => {
+    const wx = (u + 0.5) / ART_SCALE - 0.5;
+    const x0 = Math.max(0, Math.floor(wx));
+    const x1 = Math.min(width - 1, x0 + 1);
+    const a = values[x0] ?? height;
+    const b = values[x1] ?? height;
+    return Math.abs(b - a) > CLIFF
+      ? (values[Math.floor(u / ART_SCALE)] ?? height)
+      : a + (b - a) * (wx - x0);
+  };
+
+  for (let u = 0; u < artWidth; u++) {
+    const x = Math.floor(u / ART_SCALE);
     const colTop = top[x] ?? height;
-    const baseline = colTop + (lift[x] ?? 0);
+    const surfTop = surfaceAt(top, u);
+    const baseline = surfaceAt(base, u);
     const slope = (smooth(Math.min(width - 1, x + 6)) - smooth(Math.max(0, x - 6))) / 12;
     const stretch = Math.min(T.mossBandMaxStretch, Math.sqrt(1 + slope * slope));
     const highlightEnd = HIGHLIGHT.to * stretch;
@@ -146,27 +176,27 @@ export function paintGardenArt(layout: TerrainLayout, tile: SoilTile): Rgba {
     const bump = owner[x] ?? -1;
     const bumpJitter = 1 + (hash2(bump, 31) * 2 - 1) * T.mossFuzz.colorJitter;
 
-    for (let y = colTop; y < height; y++) {
-      const i = y * width + x;
-      if (data[i] === 0) continue;
-      const o = i * 4;
-      const fromTop = y - colTop;
-      const fromBase = y - baseline;
-
+    for (let v = colTop * ART_SCALE; v < height * ART_SCALE; v++) {
+      const y = Math.floor(v / ART_SCALE);
+      if (data[y * width + x] === 0) continue;
+      const wy = (v + 0.5) / ART_SCALE - OUTLINE;
+      const fromTop = wy - surfTop;
+      const fromBase = wy - baseline;
+      const o = (v * artWidth + u) * 4;
       if (fromTop < highlightEnd) {
         put(out, o, varyMoss(HIGHLIGHT.rgb, variation)); // crisp: no grain
       } else if (fromBase < 0) {
         put(out, o, varyMoss(FUZZ_RGB, variation), bumpJitter);
       } else if (fromBase < mainEnd - HIGHLIGHT.to) {
-        put(out, o, varyMoss(MAIN.rgb, variation), 0.97 + hash2(x, y) * 0.06);
+        put(out, o, varyMoss(MAIN.rgb, variation), 0.97 + hash2(u, v) * 0.06);
       } else if (fromBase < underEnd - HIGHLIGHT.to) {
         put(out, o, UNDER.rgb); // crisp shadow line between moss and soil
       } else {
-        const t = soilTexel(tile, x, y);
+        const t = soilTexel(tile, u, v);
         const depth = Math.max(0, fromBase);
         const k =
           (1 - soilShadeRange * Math.min(1, depth / DARKEST_DEPTH)) *
-          (1 - grainAmount + hash2(x, y) * 2 * grainAmount);
+          (1 - grainAmount + hash2(u, v) * 2 * grainAmount);
         out[o] = (tile.pixels[t] ?? 0) * k;
         out[o + 1] = (tile.pixels[t + 1] ?? 0) * k;
         out[o + 2] = (tile.pixels[t + 2] ?? 0) * k;
@@ -208,90 +238,109 @@ export function addBurn(burn: Uint8Array, mask: TerrainMask, c: Crater): void {
   }
 }
 
-/** Neighbour order when an edge pixel borrows a ground color: sides first, then corners. */
-const NEIGHBOURS = [
-  [0, -1],
-  [0, 1],
-  [-1, 0],
-  [1, 0],
-  [-1, -1],
-  [1, -1],
-  [-1, 1],
-  [1, 1],
-] as const;
+function clamp01(t: number): number {
+  return t <= 0 ? 0 : t >= 1 ? 1 : t;
+}
+
+export interface TerrainSources {
+  /** Art-sized base colors. */
+  readonly base: Rgba;
+  /** World-sized scorch, 0..255. */
+  readonly burn: Uint8Array;
+  readonly field: EdgeField;
+  /**
+   * True when the base art already has the contour along the original silhouette (drawn maps):
+   * the engine then adds it only on fresh cuts.
+   */
+  readonly drawnOutline: boolean;
+}
 
 /**
- * Writes the visible terrain for `rect` into `target`.
+ * Writes the visible terrain for `art` (a rect in art px) into `target`, an RGBA buffer of
+ * exactly that rect's size.
  *
- * Ground = mask pixels not owned by decor. Edges are anti-aliased by coverage: alpha is the
- * share of ground in the pixel's 3×3 neighbourhood (a straight edge gets ~2/3 inside and ~1/3
- * on the outer air pixel), and air pixels borrow a neighbouring ground color. The mask itself
- * stays binary; only the picture's edge is soft (as the terrain spec allows).
+ * Coverage, contour and lip come from the edge field, bilinearly interpolated between world
+ * pixel centers, so edges are smooth at art resolution yet sit on the mask's edge (sd = 0).
  */
-export function composeTerrain(
-  target: Rgba,
-  base: Rgba,
-  burn: Uint8Array,
-  mask: TerrainMask,
-  owned: Uint8Array,
-  rect: PixelRect,
-): void {
-  const { width, height, data } = mask;
-  // Ground flags for the rect plus a 1 px border (0 outside the world), so the 3×3 sums below
-  // are plain index reads with no bounds checks.
-  const gw = rect.width + 2;
-  const gh = rect.height + 2;
-  const g = new Uint8Array(gw * gh);
-  for (let gy = 0; gy < gh; gy++) {
-    const y = rect.y + gy - 1;
-    if (y < 0 || y >= height) continue;
-    for (let gx = 0; gx < gw; gx++) {
-      const x = rect.x + gx - 1;
-      if (x < 0 || x >= width) continue;
-      const i = y * width + x;
-      g[gy * gw + gx] = data[i] === 1 && owned[i] === 0 ? 1 : 0;
-    }
-  }
-  const writeColor = (o: number, i: number): void => {
-    const k = (burn[i] ?? 0) / 255;
-    const bo = i * 4;
-    target[o] = (base[bo] ?? 0) + (BURN_RGB[0] - (base[bo] ?? 0)) * k;
-    target[o + 1] = (base[bo + 1] ?? 0) + (BURN_RGB[1] - (base[bo + 1] ?? 0)) * k;
-    target[o + 2] = (base[bo + 2] ?? 0) + (BURN_RGB[2] - (base[bo + 2] ?? 0)) * k;
-  };
+export function composeTerrain(target: Rgba, src: TerrainSources, art: PixelRect): void {
+  const { base, burn, field, drawnOutline } = src;
+  const { width, height, sd, fresh } = field;
+  const artWidth = width * ART_SCALE;
+  const lipK = T.freshCut.lighten - 1;
+  const burnK = T.burnOpacity / 255;
 
-  for (let gy = 1; gy <= rect.height; gy++) {
-    const y = rect.y + gy - 1;
-    const up = (gy - 1) * gw;
-    const mid = gy * gw;
-    const down = (gy + 1) * gw;
-    for (let gx = 1; gx <= rect.width; gx++) {
-      const x = rect.x + gx - 1;
-      const i = y * width + x;
-      const o = i * 4;
-      const n =
-        (g[up + gx - 1] ?? 0) +
-        (g[up + gx] ?? 0) +
-        (g[up + gx + 1] ?? 0) +
-        (g[mid + gx - 1] ?? 0) +
-        (g[mid + gx] ?? 0) +
-        (g[mid + gx + 1] ?? 0) +
-        (g[down + gx - 1] ?? 0) +
-        (g[down + gx] ?? 0) +
-        (g[down + gx + 1] ?? 0);
-      if (n === 0) {
+  // Bilinear taps per art column: world pixel centers at x0 and x0 + 1, weight of x0 + 1.
+  const tapX0 = new Int32Array(art.width);
+  const tapX1 = new Int32Array(art.width);
+  const tapWX = new Float32Array(art.width);
+  for (let c = 0; c < art.width; c++) {
+    const fx = (art.x + c + 0.5) / ART_SCALE - 0.5;
+    const x0 = Math.floor(fx);
+    tapX0[c] = Math.max(0, x0);
+    tapX1[c] = Math.min(width - 1, x0 + 1);
+    tapWX[c] = fx - x0;
+  }
+
+  for (let r = 0; r < art.height; r++) {
+    const v = art.y + r;
+    const fy = (v + 0.5) / ART_SCALE - 0.5;
+    const y0 = Math.floor(fy);
+    const row0 = Math.max(0, y0) * width;
+    const row1 = Math.min(height - 1, y0 + 1) * width;
+    const wy = fy - y0;
+    const nearRow = Math.min(height - 1, Math.floor((v + 0.5) / ART_SCALE)) * width;
+
+    for (let c = 0; c < art.width; c++) {
+      const o = (r * art.width + c) * 4;
+      const a = tapX0[c] ?? 0;
+      const b = tapX1[c] ?? 0;
+      const wx = tapWX[c] ?? 0;
+      const lerp = (buf: ArrayLike<number>): number => {
+        const top = (buf[row0 + a] ?? 0) + ((buf[row0 + b] ?? 0) - (buf[row0 + a] ?? 0)) * wx;
+        const bot = (buf[row1 + a] ?? 0) + ((buf[row1 + b] ?? 0) - (buf[row1 + a] ?? 0)) * wx;
+        return top + (bot - top) * wy;
+      };
+
+      const d = lerp(sd);
+      // Coverage of this art pixel (its width is 1 / ART_SCALE world px).
+      const alpha = clamp01(d * ART_SCALE + 0.5);
+      if (alpha === 0) {
         target[o + 3] = 0;
         continue;
       }
-      if (g[mid + gx] === 1) {
-        writeColor(o, i);
-      } else {
-        // Air pixel on the edge: borrow the color of a neighbouring ground pixel.
-        const from = NEIGHBOURS.find(([dx, dy]) => g[(gy + dy) * gw + gx + dx] === 1);
-        if (!from) continue; // unreachable: n > 0 means a neighbour is ground
-        writeColor(o, (y + from[1]) * width + (x + from[0]));
+
+      const u = art.x + c;
+      const bo = (v * artWidth + u) * 4;
+      let red = base[bo] ?? 0;
+      let green = base[bo + 1] ?? 0;
+      let blue = base[bo + 2] ?? 0;
+
+      const isFresh = fresh[nearRow + Math.floor((u + 0.5) / ART_SCALE)] === 1;
+      if (isFresh) {
+        const lip = lipK * clamp01((OUTLINE + LIP - d) * ART_SCALE + 0.5);
+        red *= 1 + lip;
+        green *= 1 + lip;
+        blue *= 1 + lip;
       }
-      target[o + 3] = Math.round((255 * n) / 9);
+
+      const k = lerp(burn) * burnK;
+      if (k > 0) {
+        red += (BURN_RGB[0] - red) * k;
+        green += (BURN_RGB[1] - green) * k;
+        blue += (BURN_RGB[2] - blue) * k;
+      }
+
+      if (isFresh || !drawnOutline) {
+        const t = clamp01((OUTLINE - d) * ART_SCALE + 0.5);
+        red += (OUTLINE_RGB[0] - red) * t;
+        green += (OUTLINE_RGB[1] - green) * t;
+        blue += (OUTLINE_RGB[2] - blue) * t;
+      }
+
+      target[o] = red;
+      target[o + 1] = green;
+      target[o + 2] = blue;
+      target[o + 3] = Math.round(255 * alpha);
     }
   }
 }
