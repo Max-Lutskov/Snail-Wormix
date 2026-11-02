@@ -40,6 +40,50 @@ export interface SnailViewState {
   readonly aim: number | null;
 }
 
+/** How far the helmet comes down over the eyes while hiding, snail-space units. */
+const HIDE_HELMET_DROP = 6;
+
+/** Two worried eyes just under the pulled-down helmet's brim (snail space). */
+function drawHideEyes(scene: Phaser.Scene): Phaser.GameObjects.Graphics {
+  const g = scene.add.graphics();
+  const outline = hexToInt(tokens.colors.snail.outline);
+  for (const x of [23, 31]) {
+    g.fillStyle(0xffffff, 1).fillCircle(x, -21.5, 3.6);
+    g.lineStyle(1.3, outline, 1).strokeCircle(x, -21.5, 3.6);
+    // Pupils glance up, toward the danger.
+    g.fillStyle(0x111111, 1).fillCircle(x + 0.4, -22.6, 1.6);
+  }
+  return g;
+}
+
+/** A sweat drop by the helmet and shiver marks on both sides (snail space). */
+function drawHideFx(scene: Phaser.Scene): Phaser.GameObjects.Graphics {
+  const g = scene.add.graphics();
+  const outline = hexToInt(tokens.colors.snail.outline);
+  const dew = tokens.colors.dew;
+  g.fillStyle(hexToInt(dew.fill), 1);
+  g.lineStyle(1.2, hexToInt(dew.outline), 1);
+  g.beginPath();
+  g.moveTo(41, -38);
+  g.lineTo(38.6, -33.5);
+  g.arc(41, -33, 2.5, Math.PI * 0.95, Math.PI * 0.05, true);
+  g.closePath();
+  g.fillPath();
+  g.strokePath();
+  g.lineStyle(1.8, outline, 1);
+  for (const [cx, cy, dir] of [
+    [-24, -30, -1],
+    [-27, -21, -1],
+    [43, -24, 1],
+    [45, -15, 1],
+  ] as const) {
+    g.beginPath();
+    g.arc(cx - dir * 4, cy, 4, -0.7 + (dir < 0 ? Math.PI : 0), 0.7 + (dir < 0 ? Math.PI : 0));
+    g.strokePath();
+  }
+  return g;
+}
+
 export function preloadSnail(scene: Phaser.Scene): void {
   for (const part of PARTS) {
     scene.load.svg(key(part), `art/snail/snail-${part}.svg`, { scale: SVG_SCALE });
@@ -58,6 +102,9 @@ export class SnailView {
   private readonly pupils: Phaser.GameObjects.Image[];
   private readonly hpText: Phaser.GameObjects.Text;
   private readonly marker: Phaser.GameObjects.Graphics;
+  /** Hiding pose extras (snail space): eyes peeking under the helmet, and sweat + shivers. */
+  private readonly hideEyes: Phaser.GameObjects.Graphics;
+  private readonly hideFx: Phaser.GameObjects.Graphics;
   private walkPhase = 0;
   private lastX: number;
   private tilt = 0;
@@ -76,13 +123,17 @@ export class SnailView {
       .setOrigin(BODY_ORIGIN.x, BODY_ORIGIN.y)
       .setTint(hexToInt(teamColor(snail.team)));
     this.pupils = T.eyestalkMounts.map(() => img('pupil'));
+    this.hideEyes = drawHideEyes(scene).setVisible(false);
+    this.hideFx = drawHideFx(scene).setVisible(false);
     this.art = scene.add.container(-ART_CENTER_X * ART_TO_WORLD, 0, [
       this.cannon,
       this.foot,
       shell,
       ...this.stalks,
+      this.hideEyes,
       helmet,
       ...this.pupils,
+      this.hideFx,
     ]);
     this.art.setScale(ART_TO_WORLD);
     this.root = scene.add.container(snail.x, snail.y, [this.art]).setDepth(DEPTH);
@@ -127,17 +178,15 @@ export class SnailView {
     // Squash and stretch along the crawl; a stretch while flying.
     const squash = walking ? Math.sin(this.walkPhase) * 0.05 : 0;
     const stretch = snail.grounded ? 0 : Math.min(0.12, Math.abs(snail.vy) * 0.02);
-    // Hiding (ART_SPEC.md, "Ховається"): the body pulls into the shell, the eyestalks go in,
-    // and the snail trembles.
+    // Hiding (ART_SPEC.md, "Ховається"): eyestalks in, the helmet pulled down to the eyes,
+    // which peek out from under its brim; a drop of sweat, and the snail trembles.
     const hid = snail.shell && snail.alive;
-    const pull = hid ? 0.55 : 1;
-    this.foot.setScale(
-      ((1 + squash) * (hid ? 0.8 : 1)) / SVG_SCALE,
-      ((1 - squash + stretch) * pull) / SVG_SCALE,
-    );
-    this.art.x = -ART_CENTER_X * ART_TO_WORLD + (hid ? Math.sin(time / 30) * 0.6 : 0);
-    // The helmet follows the head down (the head top is ~36 units up; it sinks with `pull`).
-    this.helmet.y = hid ? 36 * (1 - pull) : 0;
+    this.foot.setScale((1 + squash) / SVG_SCALE, (1 - squash + stretch) / SVG_SCALE);
+    this.art.x = -ART_CENTER_X * ART_TO_WORLD + (hid ? Math.sin(time / 28) * 0.7 : 0);
+    this.helmet.y = hid ? HIDE_HELMET_DROP : 0;
+    this.hideEyes.setVisible(hid);
+    this.hideFx.setVisible(hid);
+    if (hid) this.hideFx.setAlpha(0.6 + 0.4 * Math.abs(Math.sin(time / 120)));
 
     // Rotation is applied after the facing flip, so the world slope angle works for both sides.
     const targetTilt = snail.grounded ? this.groundTilt(snail, mask) : 0;
