@@ -12,7 +12,6 @@
  * Decor (mushrooms, dew, grass) is not painted here: DecorView draws it as vector sprites.
  */
 
-import { mossBumpLift } from '../../core/terrain/hills';
 import type { TerrainLayout } from '../../core/terrain/layout';
 import type { PixelRect, TerrainMask } from '../../core/terrain/mask';
 import type { Crater } from '../../core/terrain/state';
@@ -30,19 +29,8 @@ export interface SoilTile {
 }
 
 const { terrain: T, colors: C } = tokens;
-function mossBand(index: number): { from: number; to: number; rgb: Rgb } {
-  const band = T.mossBands[index];
-  if (!band) throw new Error(`tokens: terrain.mossBands[${index}] is missing`);
-  return { from: band.from, to: band.to, rgb: hexToRgb(band.color) };
-}
-const HIGHLIGHT = mossBand(0);
-const MAIN = mossBand(1);
-const UNDER = mossBand(2);
-const FUZZ_RGB = hexToRgb(C.moss.fuzz);
-const CAP = T.mossCap;
-const GLINT_RGB = hexToRgb(CAP.glint.color);
-const SPECK_RGB = hexToRgb(CAP.speck.color);
-const DRIP_RGB = hexToRgb(CAP.drip.color);
+const TURF = T.turf.bands.map((band) => ({ to: band.to, rgb: hexToRgb(band.color) }));
+const TURF_SHADOW_RGB = hexToRgb(T.turf.shadow.color);
 const WARM_RGB = hexToRgb(C.moss.warm);
 const COOL_RGB = hexToRgb(C.moss.cool);
 const BURN_RGB = hexToRgb(C.crater.burn);
@@ -103,37 +91,6 @@ function soilTexel(tile: SoilTile, x: number, y: number): number {
   return ((y % n) * n + (x % n)) * 4;
 }
 
-/** True if x (world px) falls on an "on" segment of a dash pattern [on, off, on, off, ...]. */
-function onDash(x: number, dashes: readonly number[]): boolean {
-  const period = dashes.reduce((a, b) => a + b, 0);
-  let at = ((x % period) + period) % period;
-  for (let i = 0; i < dashes.length; i++) {
-    const len = dashes[i] ?? 0;
-    if (at < len) return i % 2 === 0;
-    at -= len;
-  }
-  return false;
-}
-
-/** A blob of moss hanging below the cap: half an ellipse downward from `top` (world px). */
-interface Drip {
-  readonly x: number;
-  readonly top: number;
-  readonly halfWidth: number;
-  readonly length: number;
-}
-
-/** 1 inside the drip, 2 on its contour ring, 0 outside. */
-function dripAt(d: Drip, wx: number, wy: number): 0 | 1 | 2 {
-  if (wy < d.top) return 0;
-  const dx = wx - d.x;
-  const dy = wy - d.top;
-  const inner = (dx / d.halfWidth) ** 2 + (dy / d.length) ** 2;
-  if (inner <= 1) return 1;
-  const outer = (dx / (d.halfWidth + OUTLINE)) ** 2 + (dy / (d.length + OUTLINE)) ** 2;
-  return outer <= 1 ? 2 : 0;
-}
-
 /** 1 for every mask pixel that belongs to decor rather than ground. */
 export function decorOwnership(layout: TerrainLayout): Uint8Array {
   const owned = new Uint8Array(layout.mask.width * layout.mask.height);
@@ -141,18 +98,10 @@ export function decorOwnership(layout: TerrainLayout): Uint8Array {
   return owned;
 }
 
-/**
- * Ground art for generated terrain, art-sized: varied soil tile with moss along the surface.
- * Moss bands start under the contour, which covers the first `outline.width` px.
- */
-export function paintGardenArt(layout: TerrainLayout, tile: SoilTile): Rgba {
+/** First ground pixel per column, ignoring decor (height where the column is empty). */
+export function surfaceTops(layout: TerrainLayout): Int32Array {
   const { width, height, data } = layout.mask;
-  const artWidth = width * ART_SCALE;
-  const out = new Uint8ClampedArray(artWidth * height * ART_SCALE * 4);
   const owned = decorOwnership(layout);
-  const { lift, owner } = mossBumpLift(width, layout.mossBumps);
-
-  // First ground pixel per column, ignoring decor.
   const top = new Int32Array(width).fill(height);
   for (let x = 0; x < width; x++) {
     for (let y = 0; y < height; y++) {
@@ -163,123 +112,87 @@ export function paintGardenArt(layout: TerrainLayout, tile: SoilTile): Rgba {
       }
     }
   }
+  return top;
+}
 
-  // Moss bands are measured along the surface normal: thicken them on slopes by 1/cos(slope).
-  const base = new Float64Array(width);
-  for (let x = 0; x < width; x++) base[x] = (top[x] ?? height) + (lift[x] ?? 0);
+/**
+ * Ground art for generated terrain, art-sized: the soil tile with a band of turf along the
+ * surface (its grass fringe is the separate non-solid layer, see grassArt.ts). Turf bands
+ * start under the contour, which covers the first `outline.width` px.
+ */
+export function paintGardenArt(layout: TerrainLayout, tile: SoilTile): Rgba {
+  const { width, height, data } = layout.mask;
+  const artWidth = width * ART_SCALE;
+  const out = new Uint8ClampedArray(artWidth * height * ART_SCALE * 4);
+  const top = surfaceTops(layout);
+
+  // Bands are measured along the surface normal: thicken them on slopes by 1/cos(slope).
   const prefix = new Float64Array(width + 1);
-  for (let x = 0; x < width; x++) prefix[x + 1] = (prefix[x] ?? 0) + (base[x] ?? 0);
+  for (let x = 0; x < width; x++) prefix[x + 1] = (prefix[x] ?? 0) + (top[x] ?? height);
   const smooth = (x: number): number => {
     const a = Math.max(0, x - SLOPE_SMOOTH);
     const b = Math.min(width, x + SLOPE_SMOOTH + 1);
     return ((prefix[b] ?? 0) - (prefix[a] ?? 0)) / (b - a);
   };
 
-  const stretchAt = new Float64Array(width);
-  for (let x = 0; x < width; x++) {
-    const slope = (smooth(Math.min(width - 1, x + 6)) - smooth(Math.max(0, x - 6))) / 12;
-    stretchAt[x] = Math.min(T.mossBandMaxStretch, Math.sqrt(1 + slope * slope));
-  }
-
-  // Drips hang where the cap is fairly flat, from the bottom of the main moss band.
-  const drips: Drip[] = [];
-  const D = CAP.drip;
-  for (let x = D.spacingMin * hash2(width, 3); x < width;) {
-    const cx = Math.floor(x);
-    const slope = Math.abs(smooth(Math.min(width - 1, cx + 6)) - smooth(Math.max(0, cx - 6))) / 12;
-    if (slope <= D.maxSlope && (top[cx] ?? height) < height) {
-      const stretch = stretchAt[cx] ?? 1;
-      drips.push({
-        x,
-        top: (base[cx] ?? height) + OUTLINE + MAIN.to * stretch - HIGHLIGHT.to,
-        halfWidth: D.halfWidthMin + (D.halfWidthMax - D.halfWidthMin) * hash2(cx, 11),
-        length: D.lengthMin + (D.lengthMax - D.lengthMin) * hash2(cx, 17),
-      });
-    }
-    x += D.spacingMin + (D.spacingMax - D.spacingMin) * hash2(cx, 5);
-  }
-
   const soilShadeRange = 1 - T.depthDarkenMin;
   const grainAmount = T.soilGrain;
+  const shadow = T.turf.shadow;
 
   // Surface height at art column u, interpolated between world columns so band edges slope
   // smoothly instead of stepping every world px (but not across cliffs).
-  const surfaceAt = (values: ArrayLike<number>, u: number): number => {
+  const surfaceAt = (u: number): number => {
     const wx = (u + 0.5) / ART_SCALE - 0.5;
     const x0 = Math.max(0, Math.floor(wx));
     const x1 = Math.min(width - 1, x0 + 1);
-    const a = values[x0] ?? height;
-    const b = values[x1] ?? height;
+    const a = top[x0] ?? height;
+    const b = top[x1] ?? height;
     return Math.abs(b - a) > CLIFF
-      ? (values[Math.floor(u / ART_SCALE)] ?? height)
+      ? (top[Math.floor(u / ART_SCALE)] ?? height)
       : a + (b - a) * (wx - x0);
   };
 
   for (let u = 0; u < artWidth; u++) {
     const x = Math.floor(u / ART_SCALE);
     const colTop = top[x] ?? height;
-    const surfTop = surfaceAt(top, u);
-    const baseline = surfaceAt(base, u);
-    const stretch = stretchAt[x] ?? 1;
-    const highlightEnd = HIGHLIGHT.to * stretch;
-    const mainEnd = MAIN.to * stretch;
-    const underEnd = UNDER.to * stretch;
+    const surfTop = surfaceAt(u);
+    const slope = (smooth(Math.min(width - 1, x + 6)) - smooth(Math.max(0, x - 6))) / 12;
+    const stretch = Math.min(T.mossBandMaxStretch, Math.sqrt(1 + slope * slope));
     const variation = mossVariation(x);
-    const bump = owner[x] ?? -1;
-    const bumpJitter = 1 + (hash2(bump, 31) * 2 - 1) * T.mossFuzz.colorJitter;
-    const wx = (u + 0.5) / ART_SCALE;
-    const glint = onDash(wx, CAP.glint.dashes);
-    const glintFrom = CAP.glint.from * stretch;
-    const glintTo = CAP.glint.to * stretch;
-    // Nearest speck center along x (pattern of dot positions, period = sum of spacings).
-    const [s0, s1] = CAP.speck.spacing;
-    const period = (s0 ?? 0) + (s1 ?? 0);
-    const phase = ((wx % period) + period) % period;
-    const speckDx = Math.min(phase, Math.abs(phase - (s0 ?? 0)), period - phase);
-    const speckY = CAP.speck.depth * stretch;
-    const near = drips.filter((d) => Math.abs(wx - d.x) <= d.halfWidth + OUTLINE);
+    const turf = TURF.map((band) => ({
+      to: band.to * stretch,
+      rgb: varyMoss(band.rgb, variation),
+    }));
 
     for (let v = colTop * ART_SCALE; v < height * ART_SCALE; v++) {
       const y = Math.floor(v / ART_SCALE);
       if (data[y * width + x] === 0) continue;
-      const wy = (v + 0.5) / ART_SCALE - OUTLINE;
-      const fromTop = wy - surfTop;
-      const fromBase = wy - baseline;
+      // Depth below the contour, along the normal.
+      const depth = ((v + 0.5) / ART_SCALE - OUTLINE - surfTop) / stretch;
       const o = (v * artWidth + u) * 4;
-      const inMain = fromBase >= 0 && fromBase < mainEnd - HIGHLIGHT.to;
-      const drip =
-        fromBase < mainEnd - HIGHLIGHT.to
-          ? 0
-          : near.reduce<0 | 1 | 2>(
-              (best, d) =>
-                best === 1 ? 1 : (Math.max(best, dripAt(d, wx, wy + OUTLINE)) as 0 | 1 | 2),
-              0,
-            );
-      if (glint && fromTop >= glintFrom && fromTop < glintTo) {
-        put(out, o, varyMoss(GLINT_RGB, variation));
-      } else if (fromTop < highlightEnd) {
-        put(out, o, varyMoss(HIGHLIGHT.rgb, variation)); // crisp: no grain
-      } else if (fromBase < 0) {
-        put(out, o, varyMoss(FUZZ_RGB, variation), bumpJitter);
-      } else if (inMain && speckDx ** 2 + (fromTop - speckY) ** 2 <= CAP.speck.radius ** 2) {
-        put(out, o, varyMoss(SPECK_RGB, variation));
-      } else if (inMain) {
-        put(out, o, varyMoss(MAIN.rgb, variation)); // flat, like drawn maps
-      } else if (drip === 1) {
-        put(out, o, varyMoss(DRIP_RGB, variation));
-      } else if (drip === 2 || fromBase < underEnd - HIGHLIGHT.to) {
-        put(out, o, UNDER.rgb); // crisp dark line between moss and soil, and around drips
-      } else {
-        const t = soilTexel(tile, u, v);
-        const depth = Math.max(0, fromBase);
-        const k =
-          (1 - soilShadeRange * Math.min(1, depth / DARKEST_DEPTH)) *
-          (1 - grainAmount + hash2(u, v) * 2 * grainAmount);
-        out[o] = (tile.pixels[t] ?? 0) * k;
-        out[o + 1] = (tile.pixels[t + 1] ?? 0) * k;
-        out[o + 2] = (tile.pixels[t + 2] ?? 0) * k;
-        out[o + 3] = 255;
+      const band = turf.find((b) => depth * stretch < b.to);
+      if (band) {
+        put(out, o, band.rgb);
+        continue;
       }
+      const t = soilTexel(tile, u, v);
+      let k =
+        (1 - soilShadeRange * Math.min(1, Math.max(0, depth) / DARKEST_DEPTH)) *
+        (1 - grainAmount + hash2(u, v) * 2 * grainAmount);
+      let red = (tile.pixels[t] ?? 0) * k;
+      let green = (tile.pixels[t + 1] ?? 0) * k;
+      let blue = (tile.pixels[t + 2] ?? 0) * k;
+      // Soft shadow the turf casts on the soil right under it.
+      if (depth < shadow.to) {
+        k = shadow.opacity * (1 - Math.max(0, depth - shadow.from) / (shadow.to - shadow.from));
+        red += (TURF_SHADOW_RGB[0] - red) * k;
+        green += (TURF_SHADOW_RGB[1] - green) * k;
+        blue += (TURF_SHADOW_RGB[2] - blue) * k;
+      }
+      out[o] = red;
+      out[o + 1] = green;
+      out[o + 2] = blue;
+      out[o + 3] = 255;
     }
   }
   return out;

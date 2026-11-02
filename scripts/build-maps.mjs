@@ -1,10 +1,11 @@
-// Rasterizes drawn maps: public/maps/<id>/terrain.svg (+ optional back.svg) -> PNG at ART_SCALE
+// Rasterizes drawn maps: public/maps/<id>/terrain.svg (+ optional back.svg, the non-solid layer
+// behind, and grass.svg, the non-solid layer in front that craters erase) -> PNG at ART_SCALE
 // px per world unit (the SVGs are drawn in world units, map.json width x height).
 //
 // The PNG is the canonical map file: the game (and later the server) builds the terrain mask
 // from its alpha channel, so it must come from one deterministic renderer (resvg), not from
 // each browser's own SVG rasterizer. Also writes public/maps/index.json:
-// [{ "id": "castle", "back": true }, ...].
+// [{ "id": "castle", "back": true, "grass": false }, ...].
 //
 // Usage: npm run maps
 
@@ -67,8 +68,14 @@ for (const id of readdirSync(MAPS_DIR).sort()) {
     const backBytes = render(backSvg, join(dir, 'back.png'), meta.width, meta.height);
     line += `, back.png ${(backBytes / 1024).toFixed(0)} KB`;
   }
+  const grassSvg = join(dir, 'grass.svg');
+  const grass = existsSync(grassSvg);
+  if (grass) {
+    const grassBytes = render(grassSvg, join(dir, 'grass.png'), meta.width, meta.height);
+    line += `, grass.png ${(grassBytes / 1024).toFixed(0)} KB`;
+  }
   console.log(line);
-  index.push({ id, back });
+  index.push({ id, back, grass });
 }
 
 writeFileSync(join(MAPS_DIR, 'index.json'), `${JSON.stringify(index, null, 2)}\n`);

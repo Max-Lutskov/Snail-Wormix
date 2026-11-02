@@ -13,6 +13,7 @@ const INDEX_KEY = 'maps-index';
 interface IndexEntry {
   readonly id: string;
   readonly back: boolean;
+  readonly grass: boolean;
 }
 
 export interface LoadedMap {
@@ -21,18 +22,21 @@ export interface LoadedMap {
   readonly rgba: Rgba;
   /** Texture key of the non-solid background layer, if the map has one. */
   readonly backKey: string | null;
+  /** Texture key of the non-solid grass layer in front (craters erase it), if any. */
+  readonly grassKey: string | null;
 }
 
 const metaKey = (id: string): string => `map-meta-${id}`;
 const terrainKey = (id: string): string => `map-terrain-${id}`;
 const backKey = (id: string): string => `map-back-${id}`;
+const grassKey = (id: string): string => `map-grass-${id}`;
 
 function parseIndex(json: unknown): IndexEntry[] {
   if (!Array.isArray(json)) return [];
   return json.flatMap((e: unknown) => {
     if (typeof e !== 'object' || e === null) return [];
-    const { id, back } = e as Record<string, unknown>;
-    return typeof id === 'string' ? [{ id, back: back === true }] : [];
+    const { id, back, grass } = e as Record<string, unknown>;
+    return typeof id === 'string' ? [{ id, back: back === true, grass: grass === true }] : [];
   });
 }
 
@@ -42,10 +46,11 @@ export function preloadMaps(scene: Phaser.Scene): void {
   scene.load.once(
     `filecomplete-json-${INDEX_KEY}`,
     (_key: string, _type: string, json: unknown) => {
-      for (const { id, back } of parseIndex(json)) {
+      for (const { id, back, grass } of parseIndex(json)) {
         scene.load.json(metaKey(id), `maps/${id}/map.json`);
         scene.load.image(terrainKey(id), `maps/${id}/terrain.png`);
         if (back) scene.load.image(backKey(id), `maps/${id}/back.png`);
+        if (grass) scene.load.image(grassKey(id), `maps/${id}/grass.png`);
       }
     },
   );
@@ -68,7 +73,7 @@ function readPixels(scene: Phaser.Scene, key: string, width: number, height: num
  */
 export function readMaps(scene: Phaser.Scene): Map<string, LoadedMap> {
   const maps = new Map<string, LoadedMap>();
-  for (const { id, back } of parseIndex(scene.cache.json.get(INDEX_KEY))) {
+  for (const { id, back, grass } of parseIndex(scene.cache.json.get(INDEX_KEY))) {
     try {
       if (!scene.textures.exists(terrainKey(id))) throw new Error('terrain.png did not load');
       const meta = parseMapMeta(scene.cache.json.get(metaKey(id)));
@@ -84,6 +89,7 @@ export function readMaps(scene: Phaser.Scene): Map<string, LoadedMap> {
         data: { meta, alpha },
         rgba,
         backKey: back && scene.textures.exists(backKey(id)) ? backKey(id) : null,
+        grassKey: grass && scene.textures.exists(grassKey(id)) ? grassKey(id) : null,
       });
     } catch (error) {
       console.error(`maps: "${id}" skipped:`, error);

@@ -20,6 +20,8 @@ import { ensureFxTextures } from '../fx/fxTextures';
 import { mapLookup, preloadMaps, readMaps, type LoadedMap } from '../maps/maps';
 import { DecorView, MUSHROOM_SVG_SCALE, MUSHROOM_TEXTURE } from '../terrain/DecorView';
 import { paintGardenArt, type SoilTile } from '../terrain/terrainArt';
+import { paintHillsGrass } from '../terrain/grassArt';
+import { GrassView } from '../terrain/GrassView';
 import { TerrainView } from '../terrain/TerrainView';
 import { DEBUG_INFO } from './HudScene';
 
@@ -27,6 +29,8 @@ const CAMERA_PAN_SPEED = 600; // world px per second
 const SOIL_TILE_KEY = 'soil-tile';
 /** How far past the world edges the camera may look, so falls into the water are visible. */
 const CAMERA_MARGIN = 80;
+/** Grass fringe: over the ground, under its decor (so mushrooms aren't buried). */
+const GRASS_DEPTH = 0.4;
 
 /**
  * Match scene. For now a terrain sandbox:
@@ -38,6 +42,7 @@ export class MatchScene extends Phaser.Scene {
   private layout!: TerrainLayout;
   private view: TerrainView | null = null;
   private decor: DecorView | null = null;
+  private grass: GrassView | null = null;
   private back: Phaser.GameObjects.Image | null = null;
   private maps = new Map<string, LoadedMap>();
   private water!: Water;
@@ -155,6 +160,8 @@ export class MatchScene extends Phaser.Scene {
   private loadTerrain(source: TerrainSource): void {
     this.view?.destroy();
     this.decor?.destroy();
+    this.grass?.destroy();
+    this.grass = null;
     this.back?.destroy();
     this.back = null;
 
@@ -181,6 +188,18 @@ export class MatchScene extends Phaser.Scene {
       map !== undefined,
     ).setDepth(0);
     this.decor = new DecorView(this, this.layout);
+    const grassArt =
+      source.kind === 'hills'
+        ? paintHillsGrass(original, source.seed)
+        : map?.grassKey
+          ? (this.textures.get(map.grassKey).getSourceImage() as CanvasImageSource)
+          : null;
+    if (grassArt) {
+      const { width, height } = this.layout.mask;
+      this.grass = new GrassView(this, grassArt, width, height, this.state.craters).setDepth(
+        GRASS_DEPTH,
+      );
+    }
     this.water.setLevel(this.layout.waterLevel);
     this.updateInfo();
   }
@@ -191,6 +210,7 @@ export class MatchScene extends Phaser.Scene {
       this.state = result.state;
       this.view?.onCrater(crater);
       this.decor?.remove(result.removedDecor);
+      this.grass?.onCrater(crater);
       this.updateInfo();
     });
   }

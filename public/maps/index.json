@@ -1,10 +1,12 @@
 [
   {
     "id": "bridge",
-    "back": true
+    "back": true,
+    "grass": true
   },
   {
     "id": "castle",
-    "back": true
+    "back": true,
+    "grass": false
   }
 ]
