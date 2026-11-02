@@ -15,6 +15,11 @@
     "grass": true
   },
   {
+    "id": "glade",
+    "back": true,
+    "grass": false
+  },
+  {
     "id": "island",
     "back": false,
     "grass": true
