@@ -34,7 +34,15 @@ import { GrassView } from '../terrain/GrassView';
 import { TerrainView } from '../terrain/TerrainView';
 import { preloadShots, ShotView } from '../snail/ShotView';
 import { preloadSnail, SnailView, teamColor } from '../snail/SnailView';
-import { DEBUG_INFO, HUD_RESTART, HUD_SELECT_WEAPON, HUD_STATE, type HudState } from './HudScene';
+import {
+  DEBUG_INFO,
+  HUD_JUMP,
+  HUD_MOVE,
+  HUD_RESTART,
+  HUD_SELECT_WEAPON,
+  HUD_STATE,
+  type HudState,
+} from './HudScene';
 
 /** Simulation tick (core steps are fixed at 60 per second). */
 const TICK_MS = 1000 / 60;
@@ -86,6 +94,8 @@ export class MatchScene extends Phaser.Scene {
     weapon: null,
   };
   private hudJson = '';
+  /** Crawl direction held on the on-screen buttons. */
+  private touchMove: MatchInput['move'] = 0;
 
   constructor() {
     super('MatchScene');
@@ -135,11 +145,21 @@ export class MatchScene extends Phaser.Scene {
     const restart = (): void => {
       if (this.match.phase === 'over') this.loadTerrain(this.match.terrain.source);
     };
+    const touchMove = (move: MatchInput['move']): void => {
+      this.touchMove = move;
+    };
+    const touchJump = (): void => {
+      this.queued.jump = true;
+    };
     this.game.events.on(HUD_SELECT_WEAPON, selectWeapon);
     this.game.events.on(HUD_RESTART, restart);
+    this.game.events.on(HUD_MOVE, touchMove);
+    this.game.events.on(HUD_JUMP, touchJump);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off(HUD_SELECT_WEAPON, selectWeapon);
       this.game.events.off(HUD_RESTART, restart);
+      this.game.events.off(HUD_MOVE, touchMove);
+      this.game.events.off(HUD_JUMP, touchJump);
     });
 
     const keyboard = this.input.keyboard;
@@ -173,8 +193,9 @@ export class MatchScene extends Phaser.Scene {
   }
 
   override update(time: number, delta: number): void {
-    const move = ((this.keys.right.some((k) => k.isDown) ? 1 : 0) -
+    const keys = ((this.keys.right.some((k) => k.isDown) ? 1 : 0) -
       (this.keys.left.some((k) => k.isDown) ? 1 : 0)) as MatchInput['move'];
+    const move = keys !== 0 ? keys : this.touchMove;
     this.tickCarry = Math.min(this.tickCarry + delta, TICK_MS * MAX_TICKS_PER_FRAME);
     while (this.tickCarry >= TICK_MS) {
       this.tickCarry -= TICK_MS;

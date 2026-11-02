@@ -10,6 +10,9 @@ export const HUD_STATE = 'hudState';
 /** Game events the HUD emits for MatchScene. */
 export const HUD_SELECT_WEAPON = 'hud:selectWeapon';
 export const HUD_RESTART = 'hud:restart';
+/** Touch controls: the held crawl direction (-1, 0 or 1), and a jump tap. */
+export const HUD_MOVE = 'hud:move';
+export const HUD_JUMP = 'hud:jump';
 
 export interface HudState {
   readonly teams: readonly {
@@ -59,12 +62,24 @@ export class HudScene extends Phaser.Scene {
   private images: Phaser.GameObjects.GameObject[] = [];
   private zones: Phaser.GameObjects.Zone[] = [];
   private info!: Phaser.GameObjects.Text;
+  /** Pointers holding a crawl button, by pointer id. Survives HUD rebuilds. */
+  private held = new Map<number, -1 | 1>();
+  private touch = false;
 
   constructor() {
     super({ key: 'HudScene', active: true });
   }
 
   create(): void {
+    // On-screen controls on touch devices, or with ?touch=1 to try them with a mouse.
+    this.touch =
+      this.sys.game.device.input.touch ||
+      new URLSearchParams(window.location.search).get('touch') === '1';
+    // Two fingers: one holds a crawl button while the other aims.
+    this.input.addPointer(2);
+    this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
+      this.release(p.id);
+    });
     this.g = this.add.graphics();
     this.info = this.add.text(0, 0, '', {
       fontFamily: 'monospace',
@@ -120,7 +135,7 @@ export class HudScene extends Phaser.Scene {
     const scale = this.cssScale();
     const W = this.scale.width / scale;
     const Hh = this.scale.height / scale;
-    this.info.setPosition(W - INSET - this.info.width, Hh - INSET - this.info.height);
+    this.info.setPosition(W / 2 - this.info.width / 2, Hh - 4 - this.info.height);
     const state = this.registry.get(HUD_STATE) as HudState | undefined;
     if (!state) return;
     const g = this.g;
@@ -184,7 +199,69 @@ export class HudScene extends Phaser.Scene {
       this.zones.push(zone);
     });
 
+    if (this.touch && state.winner === null) this.controls(W, Hh);
     if (state.winner !== null) this.victory(W, Hh, state);
+  }
+
+  private emitMove(): void {
+    const dirs = [...this.held.values()];
+    const move = dirs.length === 0 ? 0 : (dirs[dirs.length - 1] ?? 0);
+    this.game.events.emit(HUD_MOVE, move);
+  }
+
+  private release(pointerId: number): void {
+    if (this.held.delete(pointerId)) this.emitMove();
+  }
+
+  /** A round 52 px button with an icon; returns its hit zone. */
+  private button(
+    x: number,
+    y: number,
+    icon: (g: Phaser.GameObjects.Graphics, cx: number, cy: number) => void,
+  ): Phaser.GameObjects.Zone {
+    const g = this.g;
+    g.fillStyle(PANEL, H.panelOpacity).fillCircle(x + SLOT / 2, y + SLOT / 2, SLOT / 2);
+    g.lineStyle(2, ACCENT, 0.9).strokeCircle(x + SLOT / 2, y + SLOT / 2, SLOT / 2 - 1);
+    icon(g, x + SLOT / 2, y + SLOT / 2);
+    const zone = this.add.zone(x, y, SLOT, SLOT).setOrigin(0, 0).setInteractive();
+    this.zones.push(zone);
+    return zone;
+  }
+
+  /** Crawl ←/→ (hold) bottom right, jump (tap) above them (ART_SPEC.md, HUD). */
+  private controls(W: number, Hh: number): void {
+    const y = Hh - INSET - 24 - SLOT;
+    const right = W - INSET - 24 - SLOT;
+    const left = right - SLOT - 14;
+    const arrow = (dir: -1 | 1) => (g: Phaser.GameObjects.Graphics, cx: number, cy: number) => {
+      g.fillStyle(0xffffff, 1);
+      g.fillTriangle(cx + dir * 11, cy, cx - dir * 7, cy - 11, cx - dir * 7, cy + 11);
+    };
+    for (const [x, dir] of [
+      [left, -1],
+      [right, 1],
+    ] as const) {
+      this.button(x, y, arrow(dir)).on(
+        'pointerdown',
+        (p: Phaser.Input.Pointer, _x: number, _y: number, e: StoppableEvent) => {
+          e.stopPropagation();
+          this.held.set(p.id, dir);
+          this.emitMove();
+        },
+      );
+    }
+    const jump = this.button((left + right) / 2, y - SLOT - 14, (g, cx, cy) => {
+      g.fillStyle(0xffffff, 1);
+      g.fillTriangle(cx, cy - 12, cx - 11, cy + 2, cx + 11, cy + 2);
+      g.fillRect(cx - 4, cy + 1, 8, 10);
+    });
+    jump.on(
+      'pointerdown',
+      (_p: Phaser.Input.Pointer, _x: number, _y: number, e: StoppableEvent) => {
+        e.stopPropagation();
+        this.game.events.emit(HUD_JUMP);
+      },
+    );
   }
 
   /** Wind: an arrow-leaf leaning with the wind and its strength 0–10. */
