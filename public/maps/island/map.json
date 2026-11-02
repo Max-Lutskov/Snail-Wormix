@@ -1,15 +1,15 @@
 {
-  "id": "ledges",
-  "name": "Уступи",
+  "id": "island",
+  "name": "Острів",
   "width": 1600,
   "height": 720,
   "waterLevel": 662,
   "spawns": [
     {
-      "x": 240
+      "x": 470
     },
     {
-      "x": 1360
+      "x": 1130
     }
   ]
 }
