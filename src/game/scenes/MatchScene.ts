@@ -3,53 +3,73 @@ import { checksum } from '../../core/terrain/mask';
 import type { TerrainLayout } from '../../core/terrain/layout';
 import {
   addCrater,
+  buildBaseTerrain,
   buildTerrain,
   createTerrainState,
+  type Crater,
   type TerrainState,
 } from '../../core/terrain/state';
 import { WORLD_HEIGHT, WORLD_WIDTH } from '../../core/world';
+import { tokens } from '../art/tokens';
+import { createParallax, createSky } from '../env/sky';
+import { Water } from '../env/Water';
+import { playExplosion } from '../fx/explosion';
+import { ensureFxTextures } from '../fx/fxTextures';
+import type { SoilTile } from '../terrain/terrainArt';
 import { TerrainView } from '../terrain/TerrainView';
 
-const DEBUG_CRATER_RADIUS = 40;
 const CAMERA_PAN_SPEED = 600; // px per second
+const SOIL_TILE_KEY = 'soil-tile';
 
-/** Match scene. For now: terrain sandbox — click to blow holes, R for a new map. */
+/**
+ * Match scene. For now a terrain sandbox:
+ * click = pea crater, shift+click = acorn crater, ←/→ or A/D = pan, R = new map.
+ */
 export class MatchScene extends Phaser.Scene {
   private state!: TerrainState;
   private layout!: TerrainLayout;
   private view: TerrainView | null = null;
-  private water!: Phaser.GameObjects.Rectangle;
+  private water!: Water;
+  private soilTile!: SoilTile;
   private info!: Phaser.GameObjects.Text;
-  private keys!: {
-    left: Phaser.Input.Keyboard.Key[];
-    right: Phaser.Input.Keyboard.Key[];
+  private keys: { left: Phaser.Input.Keyboard.Key[]; right: Phaser.Input.Keyboard.Key[] } = {
+    left: [],
+    right: [],
   };
 
   constructor() {
     super('MatchScene');
   }
 
+  preload(): void {
+    const size = tokens.terrain.soilTileSize;
+    this.load.svg(SOIL_TILE_KEY, 'art/soil-tile.svg', { width: size, height: size });
+  }
+
   create(): void {
+    this.soilTile = this.readSoilTile();
+    ensureFxTextures(this);
+
     const camera = this.cameras.main;
-    camera.setBackgroundColor('#8ecae6');
-    // Let the camera show a little past the world edges so falls into the water are visible.
+    // Show a little past the world edges so falls into the water are visible.
     camera.setBounds(-80, 0, WORLD_WIDTH + 160, WORLD_HEIGHT);
     camera.centerOn(WORLD_WIDTH / 2, WORLD_HEIGHT / 2);
 
-    this.water = this.add
-      .rectangle(-400, 0, WORLD_WIDTH + 800, 0, 0x2a6f97, 0.85)
-      .setOrigin(0, 0)
-      .setDepth(10);
+    createSky(this);
+    createParallax(this, WORLD_WIDTH, WORLD_HEIGHT);
+    this.water = new Water(this, WORLD_HEIGHT, -400, WORLD_WIDTH + 400, WORLD_HEIGHT + 200);
 
     this.info = this.add
-      .text(12, 10, '', { fontFamily: 'monospace', fontSize: '16px', color: '#1d2b3a' })
+      .text(12, 10, '', { fontFamily: 'monospace', fontSize: '15px', color: '#141c16' })
       .setScrollFactor(0)
-      .setDepth(20);
+      .setDepth(40);
 
     this.loadTerrain(1);
 
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      this.explode(pointer.worldX, pointer.worldY);
+      const shift = (pointer.event as MouseEvent | undefined)?.shiftKey === true;
+      const r = shift ? tokens.ammo.acorn.craterRadius : tokens.ammo.pea.craterRadius;
+      this.explode({ x: pointer.worldX, y: pointer.worldY, r });
     });
 
     const keyboard = this.input.keyboard;
@@ -62,32 +82,51 @@ export class MatchScene extends Phaser.Scene {
       keyboard.on('keydown-R', () => {
         this.loadTerrain(Math.floor(Math.random() * 1_000_000));
       });
-    } else {
-      this.keys = { left: [], right: [] };
     }
   }
 
-  override update(_time: number, delta: number): void {
+  override update(time: number, delta: number): void {
     const dir =
       (this.keys.right.some((k) => k.isDown) ? 1 : 0) -
       (this.keys.left.some((k) => k.isDown) ? 1 : 0);
     if (dir !== 0) this.cameras.main.scrollX += (dir * CAMERA_PAN_SPEED * delta) / 1000;
+    this.water.update(time);
+  }
+
+  private readSoilTile(): SoilTile {
+    const size = tokens.terrain.soilTileSize;
+    const source = this.textures.get(SOIL_TILE_KEY).getSourceImage() as CanvasImageSource;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('MatchScene: no 2D context for the soil tile');
+    ctx.drawImage(source, 0, 0, size, size);
+    return { size, pixels: ctx.getImageData(0, 0, size, size).data };
   }
 
   private loadTerrain(seed: number): void {
     this.view?.destroy();
     this.state = createTerrainState({ kind: 'hills', seed });
     this.layout = buildTerrain(this.state);
-    this.view = new TerrainView(this, this.layout);
-    this.water.setY(this.layout.waterLevel).setSize(WORLD_WIDTH + 800, WORLD_HEIGHT);
+    this.view = new TerrainView(
+      this,
+      buildBaseTerrain(this.state.source),
+      this.layout,
+      this.state.craters,
+      this.soilTile,
+    );
+    this.view.gameObject.setDepth(0);
+    this.water.setLevel(this.layout.waterLevel);
     this.updateInfo();
   }
 
-  private explode(x: number, y: number): void {
-    const result = addCrater(this.state, this.layout, { x, y, r: DEBUG_CRATER_RADIUS });
-    this.state = result.state;
-    if (result.changed) this.view?.redraw(result.changed);
-    this.updateInfo();
+  private explode(crater: Crater): void {
+    playExplosion(this, crater, this.layout.mask, () => {
+      this.state = addCrater(this.state, this.layout, crater).state;
+      this.view?.onCrater(crater);
+      this.updateInfo();
+    });
   }
 
   private updateInfo(): void {
@@ -95,7 +134,7 @@ export class MatchScene extends Phaser.Scene {
     const hash = checksum(this.layout.mask).toString(16).padStart(8, '0');
     this.info.setText(
       `seed ${source.seed} · craters ${craters.length} · mask ${hash}\n` +
-        'click: boom · ←/→ or A/D: pan · R: new map',
+        'click: pea · shift+click: acorn · ←/→ A/D: pan · R: new map',
     );
   }
 }
