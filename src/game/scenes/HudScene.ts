@@ -15,6 +15,8 @@ export const HUD_MOVE = 'hud:move';
 export const HUD_JUMP = 'hud:jump';
 /** Hide in the shell instead of shooting. */
 export const HUD_HIDE = 'hud:hide';
+/** Start a match by link: create a room to invite a friend. */
+export const HUD_INVITE = 'hud:invite';
 
 export interface HudState {
   readonly teams: readonly {
@@ -39,6 +41,16 @@ export interface HudState {
   readonly banner: { readonly text: string; readonly color: string } | null;
   /** Once over: the winning team, or -1 for a draw; null while playing. */
   readonly winner: number | null;
+  /** Online play; null on one device. */
+  readonly online: {
+    readonly room: string | null;
+    readonly link: string;
+    /** Our team. */
+    readonly seat: number | null;
+    readonly started: boolean;
+    readonly peer: boolean;
+    readonly error: string | null;
+  } | null;
 }
 
 /** Phaser's input EventData; stopPropagation keeps a HUD tap from also aiming in the world. */
@@ -73,6 +85,8 @@ export class HudScene extends Phaser.Scene {
   private touch = false;
   /** The banner on screen, so a rebuild during the same intro doesn't replay its entrance. */
   private bannerText: string | null = null;
+  /** Shows "Скопійовано" on the copy button for a moment. */
+  private copied = false;
 
   constructor() {
     super({ key: 'HudScene', active: true });
@@ -158,7 +172,8 @@ export class HudScene extends Phaser.Scene {
       }
       g.fillStyle(hexToInt(team.color), 1).fillCircle(x + 24, y + CARD.h / 2, 12);
       g.lineStyle(2, OUTLINE, 1).strokeCircle(x + 24, y + CARD.h / 2, 12);
-      this.text(x + 44, y + 7, team.name, 15);
+      const mine = state.online?.started === true && state.online.seat === i;
+      this.text(x + 44, y + 7, mine ? `${team.name} (ти)` : team.name, 15);
       const bw = CARD.w - 100;
       g.fillStyle(TRACK, 1).fillRoundedRect(x + 44, y + 30, bw, 10, 5);
       const share = Math.max(0, team.hp / team.maxHp);
@@ -214,6 +229,18 @@ export class HudScene extends Phaser.Scene {
     if (state.winner !== null) this.victory(W, Hh, state);
     if (state.banner) this.banner(W, Hh, state.banner);
     else this.bannerText = null;
+    const online = state.online;
+    if (!online) {
+      this.pillButton(INSET, INSET + CARD.h + 10, 'Грати з другом', () => {
+        this.game.events.emit(HUD_INVITE);
+      });
+    } else if (online.error) {
+      this.notice(W, Hh, online.error);
+    } else if (!online.started) {
+      this.lobby(W, Hh, online);
+    } else if (!online.peer) {
+      this.notice(W, Hh, 'Суперник відключився — чекаємо…');
+    }
   }
 
   /** The shell slot: a spiral shell; taps hide the snail (ART_SPEC.md, "Ховається"). */
@@ -313,6 +340,71 @@ export class HudScene extends Phaser.Scene {
         this.game.events.emit(HUD_JUMP);
       },
     );
+  }
+
+  /** A rounded button with a label; `onTap` runs on press (without aiming in the world). */
+  private pillButton(x: number, y: number, label: string, onTap: () => void, w?: number): void {
+    const t = this.text(0, 0, label, 15, tokens.colors.hud.panel);
+    const bw = w ?? t.width + 32;
+    const bh = 38;
+    this.g.fillStyle(ACCENT, 1).fillRoundedRect(x, y, bw, bh, bh / 2);
+    this.g.lineStyle(2, OUTLINE, 1).strokeRoundedRect(x, y, bw, bh, bh / 2);
+    t.setPosition(x + bw / 2 - t.width / 2, y + bh / 2 - t.height / 2);
+    const zone = this.add.zone(x, y, bw, bh).setOrigin(0, 0).setInteractive();
+    zone.on(
+      'pointerdown',
+      (_p: Phaser.Input.Pointer, _x: number, _y: number, e: StoppableEvent) => {
+        e.stopPropagation();
+        onTap();
+      },
+    );
+    this.zones.push(zone);
+  }
+
+  /** Waiting for the friend: the room code and the link to send, with a copy button. */
+  private lobby(W: number, Hh: number, online: NonNullable<HudState['online']>): void {
+    const pw = Math.min(W - 2 * INSET, 520);
+    const ph = 170;
+    const x = W / 2 - pw / 2;
+    const y = Hh / 2 - ph / 2;
+    this.g.fillStyle(PANEL, 0.92).fillRoundedRect(x, y, pw, ph, 18);
+    this.g.lineStyle(3, ACCENT, 1).strokeRoundedRect(x, y, pw, ph, 18);
+    if (!online.room) {
+      const t = this.text(0, 0, 'Підключаємось…', 20);
+      t.setPosition(W / 2 - t.width / 2, Hh / 2 - t.height / 2);
+      return;
+    }
+    const title = this.text(0, y + 18, `Кімната ${online.room}`, 22, tokens.colors.hud.accent);
+    title.setPosition(W / 2 - title.width / 2, y + 18);
+    const hint = this.text(0, y + 52, 'Надішли другу посилання — і грайте:', 14);
+    hint.setPosition(W / 2 - hint.width / 2, y + 52);
+    const link = this.text(0, y + 78, online.link, 13, '#cfe8d6');
+    link.setPosition(W / 2 - Math.min(link.width, pw - 24) / 2, y + 78);
+    if (link.width > pw - 24) link.setCrop(0, 0, pw - 24, link.height);
+    this.pillButton(
+      W / 2 - 90,
+      y + ph - 54,
+      this.copied ? 'Скопійовано!' : 'Копіювати посилання',
+      () => {
+        void navigator.clipboard.writeText(online.link).then(() => {
+          this.copied = true;
+          this.layout();
+          this.time.delayedCall(1500, () => {
+            this.copied = false;
+            this.layout();
+          });
+        });
+      },
+      180,
+    );
+  }
+
+  /** A one-line message in the middle of the screen. */
+  private notice(W: number, Hh: number, message: string): void {
+    const t = this.text(0, 0, message, 18);
+    const pw = t.width + 40;
+    this.g.fillStyle(PANEL, 0.92).fillRoundedRect(W / 2 - pw / 2, Hh / 2 - 26, pw, 52, 26);
+    t.setPosition(W / 2 - t.width / 2, Hh / 2 - t.height / 2);
   }
 
   /** "Хід: Червоні" in the middle of the screen while the next turn's intro plays. */

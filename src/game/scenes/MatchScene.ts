@@ -3,6 +3,7 @@ import {
   aimTicksLeft,
   canHide,
   createMatch,
+  matchChecksum,
   TURN,
   stepMatch,
   type MatchEvent,
@@ -18,7 +19,9 @@ import {
   buildTerrain,
   createTerrainState,
   type TerrainSource,
+  type TerrainState,
 } from '../../core/terrain/state';
+import type { ClientInput } from '../../net/protocol';
 import { WEAPON_IDS, type WeaponId } from '../../core/weapons';
 import { ART_SCALE, WORLD_HEIGHT, WORLD_WIDTH } from '../../core/world';
 import { tokens } from '../art/tokens';
@@ -29,6 +32,7 @@ import { playExplosion } from '../fx/explosion';
 import { ensureFxTextures } from '../fx/fxTextures';
 import { Slingshot, toVector } from '../input/Slingshot';
 import { mapLookup, preloadMaps, readMaps, type LoadedMap } from '../maps/maps';
+import { Online } from '../net/Online';
 import { DecorView, MUSHROOM_SVG_SCALE, MUSHROOM_TEXTURE } from '../terrain/DecorView';
 import { paintGardenArt, type SoilTile } from '../terrain/terrainArt';
 import { paintHillsGrass } from '../terrain/grassArt';
@@ -39,6 +43,7 @@ import { preloadSnail, SnailView, teamColor } from '../snail/SnailView';
 import {
   DEBUG_INFO,
   HUD_HIDE,
+  HUD_INVITE,
   HUD_JUMP,
   HUD_MOVE,
   HUD_RESTART,
@@ -65,8 +70,13 @@ const TEAM_NAMES = ['Зелені', 'Червоні'] as const;
 const WIND_KEY = 'leaf-wind';
 const WEAPON_KEYS = ['ONE', 'TWO', 'THREE', 'FOUR'] as const;
 
+/** Online: when the client is this many ticks behind the server, it catches up at once. */
+const NET_CATCH_UP = 8;
+
 /**
- * Match scene: a hot-seat duel, one snail per team, taking turns.
+ * Match scene: a duel, one snail per team, taking turns. Hot-seat on one device, or online
+ * by link (?room=CODE): then the server's confirmed inputs drive the match and each player
+ * controls only their own team.
  * ←/→ or A/D = crawl, W/↑/space = jump, drag anywhere and release = slingshot shot,
  * 1/2/3 = weapon, Enter = new match when over, R = new generated hills, M = next drawn map.
  */
@@ -97,6 +107,12 @@ export class MatchScene extends Phaser.Scene {
   private glideFrom: { x: number; y: number } | null = null;
   /** Crawl direction held on the on-screen buttons. */
   private touchMove: MatchInput['move'] = 0;
+  /** Online play, once started from the HUD or a ?room= link. */
+  private online: Online | null = null;
+  /** Online: ticks stepped so far, the crawl last sent, and a resync in flight. */
+  private netTick = 0;
+  private sentMove: MatchInput['move'] = 0;
+  private resyncing = false;
 
   constructor() {
     super('MatchScene');
@@ -135,37 +151,47 @@ export class MatchScene extends Phaser.Scene {
       this,
       () => this.canAim(),
       (aim) => {
-        this.queued = { ...this.queued, fire: toVector(aim) };
+        this.act({ fire: toVector(aim) });
       },
     );
     this.loadTerrain(this.startSource());
+    const code = new URLSearchParams(window.location.search).get('room');
+    if (code) this.goOnline(code);
 
     const selectWeapon = (id: WeaponId): void => {
-      this.queued = { ...this.queued, weapon: id };
+      this.act({ weapon: id });
     };
     const restart = (): void => {
-      if (this.match.phase === 'over') this.loadTerrain(this.match.terrain.source);
+      if (this.match.phase !== 'over') return;
+      if (this.online) this.online.rematch();
+      else this.loadTerrain(this.match.terrain.source);
+    };
+    const invite = (): void => {
+      if (!this.online) this.goOnline(null);
     };
     const touchMove = (move: MatchInput['move']): void => {
       this.touchMove = move;
     };
     const touchJump = (): void => {
-      this.queued = { ...this.queued, jump: true };
+      this.act({ jump: true });
     };
     const hide = (): void => {
-      this.queued = { ...this.queued, hide: true };
+      this.act({ hide: true });
     };
     this.game.events.on(HUD_SELECT_WEAPON, selectWeapon);
     this.game.events.on(HUD_RESTART, restart);
     this.game.events.on(HUD_MOVE, touchMove);
     this.game.events.on(HUD_JUMP, touchJump);
     this.game.events.on(HUD_HIDE, hide);
+    this.game.events.on(HUD_INVITE, invite);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off(HUD_SELECT_WEAPON, selectWeapon);
       this.game.events.off(HUD_RESTART, restart);
       this.game.events.off(HUD_MOVE, touchMove);
       this.game.events.off(HUD_JUMP, touchJump);
       this.game.events.off(HUD_HIDE, hide);
+      this.game.events.off(HUD_INVITE, invite);
+      this.online?.close();
     });
 
     const keyboard = this.input.keyboard;
@@ -178,7 +204,7 @@ export class MatchScene extends Phaser.Scene {
       };
       for (const k of this.keys.jump) {
         k.on('down', () => {
-          this.queued = { ...this.queued, jump: true };
+          this.act({ jump: true });
         });
       }
       WEAPON_IDS.forEach((id, i) => {
@@ -191,10 +217,12 @@ export class MatchScene extends Phaser.Scene {
       keyboard.on('keydown-ENTER', restart);
       keyboard.on('keydown-H', hide);
       keyboard.on('keydown-R', () => {
-        this.loadTerrain({ kind: 'hills', seed: Math.floor(Math.random() * 1_000_000) });
+        if (!this.online) {
+          this.loadTerrain({ kind: 'hills', seed: Math.floor(Math.random() * 1_000_000) });
+        }
       });
       keyboard.on('keydown-M', () => {
-        this.loadTerrain(this.nextSource());
+        if (!this.online) this.loadTerrain(this.nextSource());
       });
     }
   }
@@ -203,15 +231,8 @@ export class MatchScene extends Phaser.Scene {
     const keys = ((this.keys.right.some((k) => k.isDown) ? 1 : 0) -
       (this.keys.left.some((k) => k.isDown) ? 1 : 0)) as MatchInput['move'];
     const move = keys !== 0 ? keys : this.touchMove;
-    this.tickCarry = Math.min(this.tickCarry + delta, TICK_MS * MAX_TICKS_PER_FRAME);
-    while (this.tickCarry >= TICK_MS) {
-      this.tickCarry -= TICK_MS;
-      const input: MatchInput = { move, ...this.queued };
-      this.queued = { jump: false, fire: null, weapon: null, hide: false };
-      const r = stepMatch(this.match, input, this.layout);
-      this.match = r.state;
-      for (const e of r.events) this.onEvent(e);
-    }
+    if (this.online) this.stepOnline(delta, move);
+    else this.stepLocal(delta, move);
     if (!this.canAim()) this.slingshot.cancel();
 
     const aim = this.slingshot.current();
@@ -228,9 +249,94 @@ export class MatchScene extends Phaser.Scene {
     this.publishHud();
   }
 
+  private stepLocal(delta: number, move: MatchInput['move']): void {
+    this.tickCarry = Math.min(this.tickCarry + delta, TICK_MS * MAX_TICKS_PER_FRAME);
+    while (this.tickCarry >= TICK_MS) {
+      this.tickCarry -= TICK_MS;
+      const input: MatchInput = { move, ...this.queued };
+      this.queued = { jump: false, fire: null, weapon: null, hide: false };
+      this.applyStep(input);
+    }
+  }
+
+  /**
+   * Online: steps through the ticks the server has confirmed, at 60 per second, catching up
+   * when far behind. Our crawl goes to the server when it changes and it is our turn.
+   */
+  private stepOnline(delta: number, move: MatchInput['move']): void {
+    const online = this.online;
+    if (!online?.started) return;
+    const wanted = this.myTurn() ? move : 0;
+    if (wanted !== this.sentMove) {
+      online.sendInput({ move: wanted });
+      this.sentMove = wanted;
+    }
+    this.tickCarry = Math.min(this.tickCarry + delta, TICK_MS * MAX_TICKS_PER_FRAME);
+    let behind = online.upTo - this.netTick;
+    while (behind > 0 && (this.tickCarry >= TICK_MS || behind > NET_CATCH_UP)) {
+      this.tickCarry = Math.max(0, this.tickCarry - TICK_MS);
+      this.netTick++;
+      behind--;
+      this.applyStep(online.inputFor(this.netTick));
+      const sum = online.checksumFor(this.netTick);
+      if (sum !== undefined && sum !== matchChecksum(this.match) && !this.resyncing) {
+        // Drifted from the server: ask for its state and jump to it.
+        this.resyncing = true;
+        online.resync();
+      }
+    }
+    if (behind === 0) this.tickCarry = Math.min(this.tickCarry, TICK_MS);
+  }
+
+  private applyStep(input: MatchInput): void {
+    const team = this.match.snails[this.match.active]?.team;
+    const r = stepMatch(this.match, input, this.layout);
+    this.match = r.state;
+    for (const e of r.events) this.onEvent(e);
+    // A new turn: the held crawl belongs to nobody now.
+    if (this.match.snails[this.match.active]?.team !== team) this.sentMove = 0;
+  }
+
+  /** A player action: queued for the next tick, or sent to the server online. */
+  private act(input: Omit<ClientInput, 'move'>): void {
+    if (!this.online) {
+      this.queued = { ...this.queued, ...input };
+    } else if (this.myTurn()) {
+      this.online.sendInput(input);
+    }
+  }
+
+  /** Whether the local player controls the active snail (always, on one device). */
+  private myTurn(): boolean {
+    if (!this.online) return true;
+    return this.online.started && this.match.snails[this.match.active]?.team === this.online.seat;
+  }
+
+  /** Starts a match by link: joins room `code`, or creates a room to invite a friend. */
+  private goOnline(code: string | null): void {
+    this.slingshot.cancel();
+    this.online = new Online(code, {
+      start: (map, seed) => {
+        this.netTick = 0;
+        this.resyncing = false;
+        this.sentMove = 0;
+        this.loadTerrain({ kind: 'map', id: map }, seed);
+      },
+      state: (tick, state) => {
+        this.netTick = tick;
+        this.resyncing = false;
+        this.sentMove = 0;
+        this.showMatch(state);
+      },
+      changed: () => {
+        this.hudJson = '';
+      },
+    });
+  }
+
   private canAim(): boolean {
     const snail = this.match.snails[this.match.active];
-    return this.match.phase === 'aim' && snail?.alive === true && snail.grounded;
+    return this.myTurn() && this.match.phase === 'aim' && snail?.alive === true && snail.grounded;
   }
 
   private shotWorld(): ShotWorld {
@@ -361,12 +467,15 @@ export class MatchScene extends Phaser.Scene {
       activeTeam: team,
       seconds: m.phase === 'aim' ? Math.ceil(aimTicksLeft(m) / 60) : null,
       wind: m.wind / MAX_WIND,
-      weapons: WEAPON_IDS.map((id) => ({
-        id,
-        count: ammo?.[id] ?? null,
-        selected: id === m.weapon,
-      })),
-      hide: m.phase !== 'aim' ? null : canHide(m) ? 'ready' : 'cooldown',
+      // Online, the other player's turn shows no controls of ours.
+      weapons: !this.myTurn()
+        ? []
+        : WEAPON_IDS.map((id) => ({
+            id,
+            count: ammo?.[id] ?? null,
+            selected: id === m.weapon,
+          })),
+      hide: m.phase !== 'aim' || !this.myTurn() ? null : canHide(m) ? 'ready' : 'cooldown',
       banner:
         m.phase === 'intro'
           ? {
@@ -375,6 +484,16 @@ export class MatchScene extends Phaser.Scene {
             }
           : null,
       winner: m.winner,
+      online: this.online
+        ? {
+            room: this.online.room,
+            link: this.online.link,
+            seat: this.online.seat,
+            started: this.online.started,
+            peer: this.online.peer,
+            error: this.online.error,
+          }
+        : null,
     };
     const json = JSON.stringify(state);
     if (json !== this.hudJson) {
@@ -426,8 +545,31 @@ export class MatchScene extends Phaser.Scene {
     return next === undefined ? { kind: 'hills', seed: 1 } : { kind: 'map', id: next };
   }
 
-  /** Loads the terrain and starts a new match on it. */
-  private loadTerrain(source: TerrainSource): void {
+  /** Loads the terrain and starts a new match on it (with `seed`, or a random one). */
+  private loadTerrain(
+    source: TerrainSource,
+    seed: number = Math.floor(Math.random() * 2 ** 31),
+  ): void {
+    const terrain = createTerrainState(source);
+    this.showTerrain(terrain);
+    this.showMatch(createMatch(terrain, this.layout, seed), false);
+  }
+
+  /** Shows `state`, rebuilding the terrain from its crater log unless it is already shown. */
+  private showMatch(state: MatchState, rebuild = true): void {
+    if (rebuild) this.showTerrain(state.terrain);
+    this.match = state;
+    this.glideFrom = this.cameras.main.midPoint.clone();
+    for (const v of this.snailViews) v.destroy();
+    this.snailViews = this.match.snails.map((s) => new SnailView(this, s));
+    this.shotView.update(null);
+    this.slingshot.cancel();
+    this.updateInfo();
+  }
+
+  /** Builds the live terrain and its views (with any craters already in `terrain`). */
+  private showTerrain(terrain: TerrainState): void {
+    const { source } = terrain;
     this.view?.destroy();
     this.decor?.destroy();
     this.grass?.destroy();
@@ -436,7 +578,6 @@ export class MatchScene extends Phaser.Scene {
     this.back = null;
 
     const lookup = mapLookup(this.maps);
-    const terrain = createTerrainState(source);
     this.layout = buildTerrain(terrain, lookup);
     const map = source.kind === 'map' ? this.maps.get(source.id) : undefined;
     const original = buildBaseTerrain(source, lookup);
@@ -471,14 +612,6 @@ export class MatchScene extends Phaser.Scene {
       );
     }
     this.water.setLevel(this.layout.waterLevel);
-
-    this.match = createMatch(terrain, this.layout, Math.floor(Math.random() * 2 ** 31));
-    this.glideFrom = this.cameras.main.midPoint.clone();
-    for (const v of this.snailViews) v.destroy();
-    this.snailViews = this.match.snails.map((s) => new SnailView(this, s));
-    this.shotView.update(null);
-    this.slingshot.cancel();
-    this.updateInfo();
   }
 
   private updateInfo(): void {
