@@ -4,16 +4,19 @@
 // flat painted scene in the picture's style (sky sampled from the picture, layered far hills,
 // palms) under the picture's own background. Craters reveal that painted scene, not a blur.
 //
-// Usage: node scripts/art/picture/gen-glade.mjs <picture@4x.png> <cut@4x.png>
+// Usage: node scripts/art/picture/gen-glade.mjs <picture@4x.png> <cut@4x.png> [backdrop.png]
 //   picture@4x.png  the picture upscaled 4x (4096x3072)
 //   cut@4x.png      its terrain cut (cut.mjs with erode 7), same size
+//   backdrop.png    a painted backdrop for the whole world (any size): replaces the painted
+//                   scene and the picture's own background. Scaled to cover the world width,
+//                   bottom-aligned (its ground meets the water), the sky cropped at the top.
 import { Resvg } from '@resvg/resvg-js';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readPng, writePng } from './png.mjs';
 
-const [, , picPath, cutPath] = process.argv;
+const [, , picPath, cutPath, backdropPath] = process.argv;
 const DIR = 'public/maps/glade';
 const W = 1600;
 const H = 720;
@@ -184,5 +187,19 @@ const render = (svg, out) => {
   writeFileSync(out, png);
   console.log(out, Math.round(png.length / 1024), 'KB');
 };
-render(sceneSvg, `${DIR}/back.source.png`);
+/** The given backdrop picture, covering the world, bottom-aligned. */
+function backdropSvg(path) {
+  const meta = readFileSync(path);
+  // PNG IHDR: width and height at bytes 16 and 20.
+  const bw = meta.readUInt32BE(16);
+  const bh = meta.readUInt32BE(20);
+  const h = Math.max(H, (W * bh) / bw);
+  const w = (h * bw) / bh;
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${W * ART}" height="${H * ART}" viewBox="0 0 ${W} ${H}">` +
+    `<image href="data:image/png;base64,${b64(path)}" x="${f((W - w) / 2)}" y="${f(H - h)}" width="${f(w)}" height="${f(h)}" preserveAspectRatio="none"/></svg>`
+  );
+}
+
+render(backdropPath ? backdropSvg(backdropPath) : sceneSvg, `${DIR}/back.source.png`);
 render(terrainSvg, `${DIR}/terrain.source.png`);
