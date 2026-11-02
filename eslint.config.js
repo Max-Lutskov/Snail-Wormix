@@ -27,6 +27,12 @@ export default tseslint.config(
     languageOptions: { globals: globals.browser },
   },
 
+  // The room server runs on Node.
+  {
+    files: ['server/**/*.ts'],
+    languageOptions: { globals: globals.node },
+  },
+
   // Core must stay pure and deterministic: no Phaser, no DOM, no wall clock, no Math.random.
   // The same code runs on the server and in replays.
   {
