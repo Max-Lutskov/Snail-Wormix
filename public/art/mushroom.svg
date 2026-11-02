@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="26" height="22" viewBox="-13 -21 26 22">
+  <!-- Surface decor only. (0,0) = bottom of the stem: Phaser origin (0.5, 0.955). -->
+  <rect x="-3" y="-14" width="6" height="14" rx="2" fill="#F4EBDD"/>
+  <path d="M-12,-12 C-12,-27 12,-27 12,-12 Z" fill="#E2453C"/>
+  <circle cx="-5" cy="-18" r="2" fill="#FFFFFF"/><circle cx="4" cy="-20" r="2.4" fill="#FFFFFF"/>
+</svg>

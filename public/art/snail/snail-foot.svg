@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="80" height="70" viewBox="-32 -66 80 70">
+  <!-- Snail space: (0,0) = bottom centre of the foot. Phaser origin (0.4, 0.943). -->
+  <path d="M-24,0 C-26,-7 -18,-9 -8,-9 L12,-9 C16,-9 17,-14 17,-22 C17,-31 22,-35 27,-35 C33,-35 36,-31 36,-23 L35,-6 C35,-2 32,0 28,0 Z" fill="#E9D2B0" stroke="#2B1B12" stroke-width="2"/>
+  <path d="M28,-18 q3.5,3 7,0" stroke="#2B1B12" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+</svg>

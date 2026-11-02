@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="28" height="12" viewBox="0 -6 28 12">
+  <!-- Barrel along +X, pivot at (0,0): Phaser origin (0, 0.5). Mount at (-6,-34) in snail space. -->
+  <rect x="0" y="-4" width="24" height="8" rx="2" fill="#4A4F57" stroke="#2B1B12" stroke-width="1.5"/>
+  <rect x="20" y="-5.5" width="7" height="11" rx="2" fill="#2F333A"/>
+</svg>

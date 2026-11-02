@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="80" height="70" viewBox="-32 -66 80 70">
+  <!-- Snail space. Separate layer on purpose: shell skins go here. -->
+  <circle cx="-4" cy="-22" r="15" fill="#C98A4B" stroke="#2B1B12" stroke-width="2"/>
+  <path d="M-4,-22 a3,3 0 1,1 4,2 a7,7 0 1,1 -9,-6 a11,11 0 1,1 14,10" fill="none" stroke="#8A5426" stroke-width="2"/>
+</svg>
