@@ -341,7 +341,8 @@ function cluster(x, scale, lean, palette, line) {
     const w = broad ? r(10, 14) : r(6.5, 10);
     const a = base + u * fan + r(-0.12, 0.12);
     // Outer blades droop outward, so the cluster reads as a soft clump.
-    const curl = (u === 0 ? r(-1, 1) : Math.sign(u)) * len * r(0.2, 0.5) * (0.5 + Math.abs(u) * 1.6);
+    const curl =
+      (u === 0 ? r(-1, 1) : Math.sign(u)) * len * r(0.2, 0.5) * (0.5 + Math.abs(u) * 1.6);
     const bx = x + u * 12 * scale + r(-2, 2);
     blades.push({ d: bladePath(bx, y + r(-2, 2), a, len, w, curl), z: rng.next() });
   }
@@ -354,7 +355,15 @@ function cluster(x, scale, lean, palette, line) {
     .join('');
   // A rounded leafy mound at the base ties the blades into one clump.
   const mound = closed(
-    blobPts(x - n[0] * 4 * scale, y - 4 - n[1] * 4 * scale, 13 * scale, 0.55, Math.atan2(-n[0], n[1]) * -1, 7, 0.18),
+    blobPts(
+      x - n[0] * 4 * scale,
+      y - 4 - n[1] * 4 * scale,
+      13 * scale,
+      0.55,
+      Math.atan2(-n[0], n[1]) * -1,
+      7,
+      0.18,
+    ),
   );
   return (
     `<g filter="url(#gloss)">` +
@@ -368,9 +377,7 @@ const patch = (x) => 0.92 + 0.33 * Math.sin(x / 70 + patchPh) * Math.sin(x / 190
 
 const backGrass = [];
 for (let x = X0 + 30; x < X1 - 30; x += r(14, 24)) {
-  backGrass.push(
-    cluster(x, patch(x) * r(1.1, 1.5), r(-0.25, 0.25), ['gb0', 'gb1'], '#0F2C0A'),
-  );
+  backGrass.push(cluster(x, patch(x) * r(1.1, 1.5), r(-0.25, 0.25), ['gb0', 'gb1'], '#0F2C0A'));
 }
 
 const baseShadows = [];
