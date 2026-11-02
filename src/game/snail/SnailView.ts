@@ -419,7 +419,9 @@ export class SnailView {
           ...BASE,
           stalks: [lean - 10, lean + 10],
           len: 1.05,
-          lids: [0.6, 0],
+          // A squint, not sleepy: the lid stops just above the middle, so the lower half of
+          // the pupil (dropped a little under it, below) stays visible.
+          lids: [0.45, 0],
           look: { x: Math.cos(forward) * 1.6, y: Math.sin(forward) * 1.6 },
           mouth: 'tongue',
         };
@@ -462,7 +464,11 @@ export class SnailView {
       const a = Phaser.Math.DegToRad(angle);
       const cx = m.x + Math.sin(a) * EYE_UP * pose.len;
       const cy = m.y - Math.cos(a) * EYE_UP * pose.len;
-      pupil.setPosition(cx + pose.look.x, cy + pose.look.y).setScale(pose.pupil / SVG_SCALE);
+      // A half-lowered lid pushes the pupil down with it, as in a squint.
+      const squint = Math.min(0.5, pose.lids[i] ?? 0) * 2.6;
+      pupil
+        .setPosition(cx + pose.look.x, cy + pose.look.y + squint)
+        .setScale(pose.pupil / SVG_SCALE);
       if (pose.eyes === 'spiral') {
         g.lineStyle(1.3, OUTLINE, 1).beginPath();
         for (let t = 0; t <= Math.PI * 4; t += 0.3) {
