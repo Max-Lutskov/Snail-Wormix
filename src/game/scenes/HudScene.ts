@@ -17,6 +17,8 @@ export const HUD_JUMP = 'hud:jump';
 export const HUD_HIDE = 'hud:hide';
 /** Start a match by link: create a room to invite a friend. */
 export const HUD_INVITE = 'hud:invite';
+/** Toggle the whole-map view. */
+export const HUD_OVERVIEW = 'hud:overview';
 
 export interface HudState {
   readonly teams: readonly {
@@ -41,6 +43,8 @@ export interface HudState {
   readonly banner: { readonly text: string; readonly color: string } | null;
   /** Once over: the winning team, or -1 for a draw; null while playing. */
   readonly winner: number | null;
+  /** Zoomed out to the whole map. */
+  readonly overview: boolean;
   /** Online play; null on one device. */
   readonly online: {
     readonly room: string | null;
@@ -67,6 +71,14 @@ const FONT = 'Trebuchet MS, Arial, sans-serif';
 const INSET = 16;
 const CARD = { w: 230, h: 50 } as const;
 const SLOT = tokens.hud.minButtonPx;
+/**
+ * The HUD is laid out for ~1000x520 CSS px and scaled down on smaller screens, but not below
+ * this, so 52 px buttons stay at least ~44 CSS px (a fingertip).
+ */
+const MIN_UI_SCALE = 0.85;
+/** The debug line (map, keys) only in development or with ?debug=1. */
+const SHOW_DEBUG =
+  import.meta.env.DEV || new URLSearchParams(window.location.search).get('debug') === '1';
 
 /**
  * Screen-space overlay above the world. Its camera zoom equals the render scale, so sizes
@@ -120,7 +132,7 @@ export class HudScene extends Phaser.Scene {
       const camera = this.cameras.main;
       const { width, height } = this.scale;
       camera.setSize(width, height);
-      camera.setZoom(this.cssScale());
+      camera.setZoom(this.cssScale() * this.uiScale());
       camera.setOrigin(0, 0);
       this.layout();
     };
@@ -136,6 +148,14 @@ export class HudScene extends Phaser.Scene {
     return parent
       ? renderSize(parent.clientWidth, parent.clientHeight, devicePixelRatio()).scale
       : 1;
+  }
+
+  /** HUD units per CSS px: below 1 on small screens. */
+  private uiScale(): number {
+    const parent = this.game.canvas.parentElement;
+    if (!parent) return 1;
+    const s = Math.min(parent.clientWidth / 1000, parent.clientHeight / 520);
+    return Math.max(MIN_UI_SCALE, Math.min(1, s));
   }
 
   private text(x: number, y: number, s: string, size: number, color = '#ffffff') {
@@ -154,9 +174,10 @@ export class HudScene extends Phaser.Scene {
     this.images = [];
     this.zones = [];
 
-    const scale = this.cssScale();
+    const scale = this.cssScale() * this.uiScale();
     const W = this.scale.width / scale;
     const Hh = this.scale.height / scale;
+    this.info.setVisible(SHOW_DEBUG);
     this.info.setPosition(W / 2 - this.info.width / 2, Hh - 4 - this.info.height);
     const state = this.registry.get(HUD_STATE) as HudState | undefined;
     if (!state) return;
@@ -226,6 +247,7 @@ export class HudScene extends Phaser.Scene {
       this.shellButton(INSET + 24 + state.weapons.length * (SLOT + 10) + 14, Hh, state.hide);
     }
     if (this.touch && state.winner === null) this.controls(W, Hh);
+    this.overviewButton(W, state.overview);
     if (state.winner !== null) this.victory(W, Hh, state);
     if (state.banner) this.banner(W, Hh, state.banner);
     else this.bannerText = null;
@@ -279,6 +301,21 @@ export class HudScene extends Phaser.Scene {
       },
     );
     this.zones.push(zone);
+  }
+
+  /** Top right, under the card: zoom out to the whole map and back. */
+  private overviewButton(W: number, out: boolean): void {
+    const x = W - INSET - SLOT;
+    const y = INSET + CARD.h + 10;
+    this.button(x, y, (g, cx, cy) => {
+      g.lineStyle(3, 0xffffff, 1).strokeCircle(cx - 3, cy - 3, 9);
+      g.lineBetween(cx + 4, cy + 4, cx + 12, cy + 12);
+      g.lineBetween(cx - 8, cy - 3, cx + 2, cy - 3);
+      if (!out) g.lineBetween(cx - 3, cy - 8, cx - 3, cy + 2);
+    }).on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: StoppableEvent) => {
+      e.stopPropagation();
+      this.game.events.emit(HUD_OVERVIEW);
+    });
   }
 
   private emitMove(): void {

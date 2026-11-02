@@ -5,6 +5,8 @@ services:
     name: snail-artillery
     runtime: node
     plan: free
+    # Close to players in Ukraine (~40 ms instead of ~200 ms to the US default).
+    region: frankfurt
     buildCommand: npm ci && npm run build
     startCommand: npm run server
     healthCheckPath: /

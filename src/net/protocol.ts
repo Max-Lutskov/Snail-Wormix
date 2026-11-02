@@ -43,7 +43,7 @@ export type ServerMessage =
 
 /** Ticks per second, and how many ticks the server batches into one message. */
 export const NET_TICK_RATE = 60;
-export const NET_BATCH = 3;
+export const NET_BATCH = 1;
 /** The server sends a checksum every this many ticks. */
 export const NET_CHECKSUM_EVERY = 60;
 /** The map online matches are played on (drawn maps load the same everywhere). */

@@ -25,7 +25,6 @@ import type { ClientInput } from '../../net/protocol';
 import { WEAPON_IDS, type WeaponId } from '../../core/weapons';
 import { ART_SCALE, WORLD_HEIGHT, WORLD_WIDTH } from '../../core/world';
 import { tokens } from '../art/tokens';
-import { worldZoom } from '../display';
 import { createParallax, createSky } from '../env/sky';
 import { Water } from '../env/Water';
 import { playExplosion } from '../fx/explosion';
@@ -44,6 +43,7 @@ import {
   DEBUG_INFO,
   HUD_HIDE,
   HUD_INVITE,
+  HUD_OVERVIEW,
   HUD_JUMP,
   HUD_MOVE,
   HUD_RESTART,
@@ -69,6 +69,13 @@ const GRASS_DEPTH = 0.4;
 const TEAM_NAMES = ['Зелені', 'Червоні'] as const;
 const WIND_KEY = 'leaf-wind';
 const WEAPON_KEYS = ['ONE', 'TWO', 'THREE', 'FOUR'] as const;
+
+/**
+ * Smallest on-screen size of a world px, in CSS px. Fitting the whole 720-high world on a
+ * phone (~390 CSS px tall) shrinks a snail to ~24 px; below this the camera zooms in and
+ * follows the action instead (the overview button shows the whole map).
+ */
+const MIN_CSS_PER_WORLD_PX = 0.85;
 
 /** Online: when the client is this many ticks behind the server, it catches up at once. */
 const NET_CATCH_UP = 8;
@@ -113,6 +120,8 @@ export class MatchScene extends Phaser.Scene {
   private netTick = 0;
   private sentMove: MatchInput['move'] = 0;
   private resyncing = false;
+  /** Zoomed out to show the whole map (HUD button or Z). */
+  private overview = false;
 
   constructor() {
     super('MatchScene');
@@ -169,6 +178,10 @@ export class MatchScene extends Phaser.Scene {
     const invite = (): void => {
       if (!this.online) this.goOnline(null);
     };
+    const toggleOverview = (): void => {
+      this.overview = !this.overview;
+      this.fitCamera();
+    };
     const touchMove = (move: MatchInput['move']): void => {
       this.touchMove = move;
     };
@@ -184,6 +197,7 @@ export class MatchScene extends Phaser.Scene {
     this.game.events.on(HUD_JUMP, touchJump);
     this.game.events.on(HUD_HIDE, hide);
     this.game.events.on(HUD_INVITE, invite);
+    this.game.events.on(HUD_OVERVIEW, toggleOverview);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off(HUD_SELECT_WEAPON, selectWeapon);
       this.game.events.off(HUD_RESTART, restart);
@@ -191,6 +205,7 @@ export class MatchScene extends Phaser.Scene {
       this.game.events.off(HUD_JUMP, touchJump);
       this.game.events.off(HUD_HIDE, hide);
       this.game.events.off(HUD_INVITE, invite);
+      this.game.events.off(HUD_OVERVIEW, toggleOverview);
       this.online?.close();
     });
 
@@ -216,6 +231,7 @@ export class MatchScene extends Phaser.Scene {
       });
       keyboard.on('keydown-ENTER', restart);
       keyboard.on('keydown-H', hide);
+      keyboard.on('keydown-Z', toggleOverview);
       keyboard.on('keydown-R', () => {
         if (!this.online) {
           this.loadTerrain({ kind: 'hills', seed: Math.floor(Math.random() * 1_000_000) });
@@ -441,6 +457,7 @@ export class MatchScene extends Phaser.Scene {
     const target = p ?? (snail?.alive ? snail : null);
     if (!target) return;
     const camera = this.cameras.main;
+    if (this.overview) return;
     if (this.match.phase === 'intro' && this.glideFrom) {
       const t = Math.min(1, this.match.phaseTicks / (TURN.introTicks * 0.85));
       const e = 0.5 - Math.cos(Math.PI * t) / 2;
@@ -484,6 +501,7 @@ export class MatchScene extends Phaser.Scene {
             }
           : null,
       winner: m.winner,
+      overview: this.overview,
       online: this.online
         ? {
             room: this.online.room,
@@ -502,18 +520,28 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  /** Zooms the camera so the world's full height fills the (physical-pixel) viewport. */
+  /**
+   * Zooms the camera: the world fills the screen (no gaps past its sides), and on small
+   * screens it zooms in further so snails stay readable (MIN_CSS_PER_WORLD_PX). The overview
+   * fits the whole map instead.
+   */
   private readonly fitCamera = (): void => {
     const camera = this.cameras.main;
     const { width, height } = this.scale;
-    // Keep looking at the same spot, unless the view was wider than the bounds (then the
-    // clamped position is meaningless): recenter on the world.
-    const center =
-      camera.worldView.width >= WORLD_WIDTH + 2 * CAMERA_MARGIN
-        ? new Phaser.Math.Vector2(WORLD_WIDTH / 2, WORLD_HEIGHT / 2)
-        : camera.midPoint.clone();
+    const cssHeight = this.game.canvas.getBoundingClientRect().height || height;
+    const perCss = height / cssHeight;
+    const fitHeight = height / WORLD_HEIGHT;
+    const fitWidth = width / (WORLD_WIDTH + 2 * CAMERA_MARGIN);
+    const zoom = this.overview
+      ? Math.min(fitHeight, fitWidth)
+      : Math.max(fitHeight, fitWidth, MIN_CSS_PER_WORLD_PX * perCss);
+    const center = this.overview
+      ? new Phaser.Math.Vector2(WORLD_WIDTH / 2, WORLD_HEIGHT / 2)
+      : camera.midPoint.clone();
     camera.setSize(width, height);
-    camera.setZoom(worldZoom(height));
+    camera.setZoom(zoom);
+    if (this.overview) camera.removeBounds();
+    else camera.setBounds(-CAMERA_MARGIN, 0, WORLD_WIDTH + 2 * CAMERA_MARGIN, WORLD_HEIGHT);
     camera.centerOn(center.x, center.y);
     this.layoutSky(camera);
   };
