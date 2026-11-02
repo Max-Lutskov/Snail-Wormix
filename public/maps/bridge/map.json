@@ -1,0 +1,8 @@
+{
+  "id": "bridge",
+  "name": "Міст",
+  "width": 1600,
+  "height": 720,
+  "waterLevel": 650,
+  "spawns": [{ "x": 290 }, { "x": 1320 }]
+}

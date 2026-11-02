@@ -81,11 +81,11 @@ export default tseslint.config(
 
   // Tooling config files run in Node and are outside the TS project rules.
   {
-    files: ['*.config.{js,ts}'],
+    files: ['*.config.{js,ts}', 'scripts/**/*.{js,mjs}'],
     languageOptions: { globals: globals.node },
   },
   {
-    files: ['**/*.js'],
+    files: ['**/*.{js,mjs}'],
     ...tseslint.configs.disableTypeChecked,
   },
 

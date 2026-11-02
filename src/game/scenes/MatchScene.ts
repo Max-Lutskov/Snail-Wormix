@@ -7,6 +7,7 @@ import {
   buildTerrain,
   createTerrainState,
   type Crater,
+  type TerrainSource,
   type TerrainState,
 } from '../../core/terrain/state';
 import { WORLD_HEIGHT, WORLD_WIDTH } from '../../core/world';
@@ -16,8 +17,9 @@ import { createParallax, createSky } from '../env/sky';
 import { Water } from '../env/Water';
 import { playExplosion } from '../fx/explosion';
 import { ensureFxTextures } from '../fx/fxTextures';
+import { mapLookup, preloadMaps, readMaps, type LoadedMap } from '../maps/maps';
 import { DecorView, MUSHROOM_SVG_SCALE, MUSHROOM_TEXTURE } from '../terrain/DecorView';
-import type { SoilTile } from '../terrain/terrainArt';
+import { paintGardenArt, type SoilTile } from '../terrain/terrainArt';
 import { TerrainView } from '../terrain/TerrainView';
 import { DEBUG_INFO } from './HudScene';
 
@@ -28,13 +30,16 @@ const CAMERA_MARGIN = 80;
 
 /**
  * Match scene. For now a terrain sandbox:
- * click = pea crater, shift+click = acorn crater, ←/→ or A/D = pan, R = new map.
+ * click = pea crater, shift+click = acorn crater, ←/→ or A/D = pan,
+ * R = new generated hills, M = next drawn map.
  */
 export class MatchScene extends Phaser.Scene {
   private state!: TerrainState;
   private layout!: TerrainLayout;
   private view: TerrainView | null = null;
   private decor: DecorView | null = null;
+  private back: Phaser.GameObjects.Image | null = null;
+  private maps = new Map<string, LoadedMap>();
   private water!: Water;
   private soilTile!: SoilTile;
   private layoutSky!: (camera: Phaser.Cameras.Scene2D.Camera) => void;
@@ -51,10 +56,12 @@ export class MatchScene extends Phaser.Scene {
     const size = tokens.terrain.soilTileSize;
     this.load.svg(SOIL_TILE_KEY, 'art/soil-tile.svg', { width: size, height: size });
     this.load.svg(MUSHROOM_TEXTURE, 'art/mushroom.svg', { scale: MUSHROOM_SVG_SCALE });
+    preloadMaps(this);
   }
 
   create(): void {
     this.soilTile = this.readSoilTile();
+    this.maps = readMaps(this);
     ensureFxTextures(this);
 
     this.layoutSky = createSky(this);
@@ -70,7 +77,7 @@ export class MatchScene extends Phaser.Scene {
       this.scale.off(Phaser.Scale.Events.RESIZE, this.fitCamera);
     });
 
-    this.loadTerrain(1);
+    this.loadTerrain({ kind: 'hills', seed: 1 });
 
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       const shift = (pointer.event as MouseEvent | undefined)?.shiftKey === true;
@@ -86,7 +93,10 @@ export class MatchScene extends Phaser.Scene {
         right: [keyboard.addKey(K.RIGHT), keyboard.addKey(K.D)],
       };
       keyboard.on('keydown-R', () => {
-        this.loadTerrain(Math.floor(Math.random() * 1_000_000));
+        this.loadTerrain({ kind: 'hills', seed: Math.floor(Math.random() * 1_000_000) });
+      });
+      keyboard.on('keydown-M', () => {
+        this.loadTerrain(this.nextSource());
       });
     }
   }
@@ -127,18 +137,31 @@ export class MatchScene extends Phaser.Scene {
     return { size, pixels: ctx.getImageData(0, 0, size, size).data };
   }
 
-  private loadTerrain(seed: number): void {
+  /** Cycles hills → each drawn map → hills. */
+  private nextSource(): TerrainSource {
+    const ids = [...this.maps.keys()];
+    const current = this.state.source;
+    const at = current.kind === 'map' ? ids.indexOf(current.id) : -1;
+    const next = ids[at + 1];
+    return next === undefined ? { kind: 'hills', seed: 1 } : { kind: 'map', id: next };
+  }
+
+  private loadTerrain(source: TerrainSource): void {
     this.view?.destroy();
     this.decor?.destroy();
-    this.state = createTerrainState({ kind: 'hills', seed });
-    this.layout = buildTerrain(this.state);
-    this.view = new TerrainView(
-      this,
-      buildBaseTerrain(this.state.source),
-      this.layout,
-      this.state.craters,
-      this.soilTile,
-    );
+    this.back?.destroy();
+    this.back = null;
+
+    const lookup = mapLookup(this.maps);
+    this.state = createTerrainState(source);
+    this.layout = buildTerrain(this.state, lookup);
+    const map = source.kind === 'map' ? this.maps.get(source.id) : undefined;
+    const baseArt = map
+      ? map.rgba
+      : paintGardenArt(buildBaseTerrain(source, lookup), this.soilTile);
+
+    if (map?.backKey) this.back = this.add.image(0, 0, map.backKey).setOrigin(0, 0).setDepth(-1);
+    this.view = new TerrainView(this, baseArt, this.layout, this.state.craters);
     this.view.gameObject.setDepth(0);
     this.decor = new DecorView(this, this.layout);
     this.water.setLevel(this.layout.waterLevel);
@@ -158,10 +181,11 @@ export class MatchScene extends Phaser.Scene {
   private updateInfo(): void {
     const { source, craters } = this.state;
     const hash = checksum(this.layout.mask).toString(16).padStart(8, '0');
+    const where = source.kind === 'hills' ? `hills ${source.seed}` : `map ${source.id}`;
     this.registry.set(
       DEBUG_INFO,
-      `seed ${source.seed} · craters ${craters.length} · mask ${hash}\n` +
-        'click: pea · shift+click: acorn · ←/→ A/D: pan · R: new map',
+      `${where} · craters ${craters.length} · mask ${hash} · maps loaded ${this.maps.size}\n` +
+        'click: pea · shift+click: acorn · ←/→ A/D: pan · R: new hills · M: next map',
     );
   }
 }

@@ -2,15 +2,7 @@ import type Phaser from 'phaser';
 import type { TerrainLayout } from '../../core/terrain/layout';
 import type { PixelRect } from '../../core/terrain/mask';
 import type { Crater } from '../../core/terrain/state';
-import {
-  addBurn,
-  burnBounds,
-  composeTerrain,
-  decorOwnership,
-  paintGardenArt,
-  type Rgba,
-  type SoilTile,
-} from './terrainArt';
+import { addBurn, burnBounds, composeTerrain, decorOwnership, type Rgba } from './terrainArt';
 
 const TEXTURE_KEY = 'terrain';
 
@@ -24,15 +16,15 @@ export class TerrainView {
   private readonly owned: Uint8Array;
 
   /**
-   * @param base the terrain before any crater (base art, moss and the back wall come from it)
+   * @param baseArt how the ground looks before any crater (generated for hills, the PNG for a
+   *   drawn map); only its colors are used, edges and holes come from the mask
    * @param layout the live terrain, already carved with `craters`
    */
   constructor(
     private readonly scene: Phaser.Scene,
-    base: TerrainLayout,
+    baseArt: Rgba,
     private readonly layout: TerrainLayout,
     craters: readonly Crater[],
-    tile: SoilTile,
   ) {
     const { width, height } = layout.mask;
     if (scene.textures.exists(TEXTURE_KEY)) scene.textures.remove(TEXTURE_KEY);
@@ -40,7 +32,7 @@ export class TerrainView {
     if (!texture) throw new Error('TerrainView: could not create canvas texture');
     this.texture = texture;
 
-    this.base = paintGardenArt(base, tile);
+    this.base = baseArt;
     this.owned = decorOwnership(layout);
     this.burn = new Uint8Array(width * height);
     for (const c of craters) addBurn(this.burn, layout.mask, c);

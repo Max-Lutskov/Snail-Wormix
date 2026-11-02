@@ -6,10 +6,11 @@
 import { decorSupport } from './decor';
 import { generateHills } from './hills';
 import type { TerrainLayout } from './layout';
+import { terrainFromMap, type MapLookup } from './map';
 import { carveCircle, isSolid, type PixelRect } from './mask';
 
-// Drawn maps ({ kind: 'map'; id }) are added together with the PNG loader.
-export type TerrainSource = { readonly kind: 'hills'; readonly seed: number };
+export type TerrainSource =
+  { readonly kind: 'hills'; readonly seed: number } | { readonly kind: 'map'; readonly id: string };
 
 export interface Crater {
   readonly x: number;
@@ -26,14 +27,19 @@ export function createTerrainState(source: TerrainSource): TerrainState {
   return { source, craters: [] };
 }
 
+const noMaps: MapLookup = () => undefined;
+
 /** The terrain exactly as its source produces it, before any crater. */
-export function buildBaseTerrain(source: TerrainSource): TerrainLayout {
-  return generateHills(source.seed);
+export function buildBaseTerrain(source: TerrainSource, maps: MapLookup = noMaps): TerrainLayout {
+  if (source.kind === 'hills') return generateHills(source.seed);
+  const map = maps(source.id);
+  if (!map) throw new Error(`terrain: map "${source.id}" is not loaded`);
+  return terrainFromMap(map);
 }
 
 /** Builds the live terrain: the source's layout with all logged craters applied. */
-export function buildTerrain(state: TerrainState): TerrainLayout {
-  const layout = buildBaseTerrain(state.source);
+export function buildTerrain(state: TerrainState, maps: MapLookup = noMaps): TerrainLayout {
+  const layout = buildBaseTerrain(state.source, maps);
   for (const crater of state.craters) applyCrater(layout, crater);
   return layout;
 }

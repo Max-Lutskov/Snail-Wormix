@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="720" viewBox="0 0 1600 720">
+  <!-- Bridge map, non-solid back layer: vine handrails, hangers and hanging vines. No collisions. -->
+  <!-- Handrail vine from post to post, sagging a bit less than the deck -->
+  <path d="M511,402 Q800,470 1089,400" stroke="#2B1B12" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <path d="M511,402 Q800,470 1089,400" stroke="#4E8F30" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <!-- Hangers from the rail down to the deck every ~60 px -->
+  <g stroke="#3E7A28" stroke-width="2.5" stroke-linecap="round">
+    <path d="M572,415 L572,462"/><path d="M632,426 L632,472"/><path d="M692,433 L692,480"/><path d="M752,437 L752,484"/><path d="M812,437 L812,486"/><path d="M872,435 L872,484"/><path d="M932,430 L932,478"/><path d="M992,421 L992,470"/><path d="M1052,409 L1052,458"/>
+  </g>
+  <g fill="#6FC046" stroke="#2B1B12" stroke-width="1"><ellipse cx="600" cy="420" rx="6" ry="3.5" transform="rotate(-25 600 420)"/><ellipse cx="700" cy="434" rx="6" ry="3.5" transform="rotate(20 700 434)"/><ellipse cx="840" cy="436" rx="6" ry="3.5" transform="rotate(-15 840 436)"/><ellipse cx="960" cy="426" rx="6" ry="3.5" transform="rotate(25 960 426)"/><ellipse cx="1060" cy="410" rx="6" ry="3.5" transform="rotate(-20 1060 410)"/></g>
+  <!-- Vines hanging under the deck -->
+  <g stroke="#3E7A28" stroke-width="3" fill="none" stroke-linecap="round">
+    <path d="M620,476 C616,500 626,516 618,540"/><path d="M680,488 C684,508 676,520 682,536"/><path d="M930,486 C926,506 936,520 928,546"/><path d="M1000,476 C1004,494 996,506 1002,522"/>
+  </g>
+  <g fill="#5DAA3A"><circle cx="618" cy="540" r="4"/><circle cx="928" cy="546" r="4"/></g>
+</svg>

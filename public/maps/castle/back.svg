@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="720" viewBox="0 0 1600 720">
+  <!-- Castle map, non-solid back layer: the inside of the towers and wall, seen through windows,
+       the gate and blast holes. Kept mid-tone so the dark burnt rim still reads against it. -->
+  <defs>
+    <pattern id="innerBrick" width="32" height="28" patternUnits="userSpaceOnUse">
+      <rect width="32" height="28" fill="#7A4A34"/>
+      <path d="M0,0 H32 M0,14 H32 M0,0 V14 M16,14 V28" stroke="#5E3626" stroke-width="2"/>
+    </pattern>
+  </defs>
+  <!-- Wall interior (slightly inset from the solid wall) -->
+  <rect x="1082" y="336" width="296" height="98" fill="url(#innerBrick)"/>
+  <!-- Tower interiors -->
+  <path d="M1012,436 L1002,222 L1088,222 L1078,436 Z" fill="url(#innerBrick)"/>
+  <path d="M1380,436 L1372,232 L1458,232 L1450,436 Z" fill="url(#innerBrick)"/>
+  <!-- Darker openings: window and gate depth -->
+  <path d="M1034,300 L1034,272 A12,12 0 0 1 1058,272 L1058,300 Z" fill="#3A2418"/>
+  <path d="M1404,312 L1404,284 A12,12 0 0 1 1428,284 L1428,312 Z" fill="#3A2418"/>
+  <path d="M1150,436 L1150,398 A35,35 0 0 1 1220,398 L1220,436 Z" fill="#4A2E20"/>
+  <!-- Warm glow in the windows -->
+  <circle cx="1046" cy="292" r="4" fill="#FFC86B"/>
+  <circle cx="1416" cy="304" r="4" fill="#FFC86B"/>
+  <!-- Hanging ivy behind the gate -->
+  <path d="M1162,402 C1166,414 1160,424 1166,434 M1206,400 C1202,412 1208,422 1202,432" stroke="#3E7A28" stroke-width="3" fill="none" stroke-linecap="round"/>
+</svg>
