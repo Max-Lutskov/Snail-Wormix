@@ -16,9 +16,9 @@ function cliff(): TerrainMask {
 }
 
 /** Fires the drill and carves as match.ts does; returns how many craters it cut. */
-function drill(mask: TerrainMask, from: Snail, angle: number, power: number): number {
+function drill(mask: TerrainMask, from: Snail, aim: { x: number; y: number }): number {
   const world: ShotWorld = { mask, waterLevel: 390, wind: 0, snails: [from] };
-  let p: Projectile = launch(from, 'dandelion', angle, power);
+  let p: Projectile = launch(from, 'dandelion', aim);
   let cuts = 0;
   for (let i = 0; i < 500; i++) {
     const step = stepProjectile(p, world);
@@ -47,7 +47,8 @@ describe('dandelion drill', () => {
     for (let i = 0; i < 400; i++) blocked = stepSnail(blocked, { move: 1, jump: false }, world);
     expect(blocked.y).toBe(300);
 
-    const cuts = drill(mask, snail, -0.6, 0.35);
+    // About 34° up at a third of full pull.
+    const cuts = drill(mask, snail, { x: 0.28887, y: -0.19763 });
     expect(cuts).toBeGreaterThan(DRILL_LENGTH / 5);
     // The tunnel comes out on top of the block.
     expect(isSolid(mask, 330, 205)).toBe(false);
@@ -70,7 +71,7 @@ describe('dandelion drill', () => {
     const shooter: Snail = { ...spawnSnail(0, 0, 100, { mask, waterLevel: 390 }), y: 300 };
     const target: Snail = { ...shooter, id: 1, x: 200 };
     const world: ShotWorld = { mask, waterLevel: 390, wind: 0, snails: [shooter, target] };
-    let p = launch(shooter, 'dandelion', 0, 1);
+    let p = launch(shooter, 'dandelion', { x: 1, y: 0 });
     for (let i = 0; i < 30; i++) {
       const step = stepProjectile(p, world);
       expect(step.kind).toBe('flying');

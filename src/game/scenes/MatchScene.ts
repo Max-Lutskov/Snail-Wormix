@@ -27,7 +27,7 @@ import { createParallax, createSky } from '../env/sky';
 import { Water } from '../env/Water';
 import { playExplosion } from '../fx/explosion';
 import { ensureFxTextures } from '../fx/fxTextures';
-import { Slingshot } from '../input/Slingshot';
+import { Slingshot, toVector } from '../input/Slingshot';
 import { mapLookup, preloadMaps, readMaps, type LoadedMap } from '../maps/maps';
 import { DecorView, MUSHROOM_SVG_SCALE, MUSHROOM_TEXTURE } from '../terrain/DecorView';
 import { paintGardenArt, type SoilTile } from '../terrain/terrainArt';
@@ -135,7 +135,7 @@ export class MatchScene extends Phaser.Scene {
       this,
       () => this.canAim(),
       (aim) => {
-        this.queued = { ...this.queued, fire: aim };
+        this.queued = { ...this.queued, fire: toVector(aim) };
       },
     );
     this.loadTerrain(this.startSource());

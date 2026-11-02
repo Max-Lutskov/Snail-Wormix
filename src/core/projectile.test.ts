@@ -28,7 +28,7 @@ function range(weapon: WeaponId): number {
     wind: 0,
     snails: [],
   };
-  let p: Projectile = launch(shooter, weapon, -Math.PI / 4, 1);
+  let p: Projectile = launch(shooter, weapon, { x: Math.SQRT1_2, y: -Math.SQRT1_2 });
   const startY = p.y;
   for (let i = 0; i < 2000; i++) {
     const step = stepProjectile(p, world);

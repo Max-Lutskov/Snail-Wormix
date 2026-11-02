@@ -3,6 +3,7 @@ import {
   aimTicksLeft,
   canHide,
   createMatch,
+  matchChecksum,
   NO_INPUT,
   stepMatch,
   TURN,
@@ -42,7 +43,7 @@ function runUntil(
   return { state: s, events };
 }
 
-const SHOOT_DOWN: MatchInput = { ...NO_INPUT, fire: { angle: Math.PI / 2, power: 0.3 } };
+const SHOOT_DOWN: MatchInput = { ...NO_INPUT, fire: { x: 0, y: 0.3 } };
 
 describe('match setup', () => {
   it('opens each turn with a short intro that takes no input', () => {
@@ -50,7 +51,7 @@ describe('match setup', () => {
     const layout = buildTerrain(terrain);
     const start = createMatch(terrain, layout, 3);
     expect(start.phase).toBe('intro');
-    const moved = stepMatch(start, { ...NO_INPUT, move: 1, fire: { angle: 0, power: 1 } }, layout);
+    const moved = stepMatch(start, { ...NO_INPUT, move: 1, fire: { x: 1, y: 0 } }, layout);
     expect(moved.state.phase).toBe('intro');
     expect(moved.state.snails[0]?.x).toBe(start.snails[0]?.x);
     const r = runUntil(start, layout, (s) => s.phase === 'aim');
@@ -184,7 +185,7 @@ describe('match determinism', () => {
     for (let i = 0; i < 1500; i++) {
       inputs.push(
         i === 40
-          ? { ...NO_INPUT, fire: { angle: -1.1, power: 0.8 } }
+          ? { ...NO_INPUT, fire: { x: 0.3629, y: -0.713 } }
           : { ...NO_INPUT, move: i < 30 ? 1 : 0 },
       );
     }
@@ -193,5 +194,13 @@ describe('match determinism', () => {
       return inputs.reduce((s, input) => stepMatch(s, input, layout).state, state);
     };
     expect(JSON.stringify(play())).toBe(JSON.stringify(play()));
+  });
+
+  it('checksums equal states equally and tells different ones apart', () => {
+    const { state, layout } = setup(9);
+    const copy = JSON.parse(JSON.stringify(state)) as MatchState;
+    expect(matchChecksum(copy)).toBe(matchChecksum(state));
+    const moved = stepMatch(state, { ...NO_INPUT, move: 1 }, layout).state;
+    expect(matchChecksum(moved)).not.toBe(matchChecksum(state));
   });
 });

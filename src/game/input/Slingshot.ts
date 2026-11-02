@@ -12,6 +12,15 @@ const DEPTH = 20;
 const BAND = hexToInt(tokens.colors.hud.accent);
 const OUTLINE = hexToInt(tokens.colors.snail.outline);
 
+/**
+ * The pull vector the simulation takes (core Aim): rounded, so the number sent online is
+ * exactly the one every client and the server use.
+ */
+export function toVector(aim: Aim): { x: number; y: number } {
+  const r = (v: number): number => Math.round(v * 1e4) / 1e4;
+  return { x: r(Math.cos(aim.angle) * aim.power), y: r(Math.sin(aim.angle) * aim.power) };
+}
+
 export interface Aim {
   /** Shot direction, radians in screen coords. */
   readonly angle: number;
@@ -131,7 +140,7 @@ export class Slingshot {
     g.fillStyle(BAND, 1).fillCircle(px, py, ring);
     g.lineStyle(2, OUTLINE, 1).strokeCircle(px, py, ring);
 
-    const shot = launch(snail, weapon, aim.angle, aim.power);
+    const shot = launch(snail, weapon, toVector(aim));
     const dots = tokens.input.trajectoryPreviewDots;
     const path = previewPath(shot, world, dots * DOT_STRIDE);
     for (let i = 0; i < dots; i++) {

@@ -12,7 +12,7 @@
  * terrain layout (as addCrater does), so the same inputs replay to the same match.
  */
 
-import { launch, MAX_WIND, stepProjectile, type Projectile } from './projectile';
+import { launch, MAX_WIND, stepProjectile, type Aim, type Projectile } from './projectile';
 import { nextFloat, seedRng, type RngState } from './rng';
 import {
   applyExplosion,
@@ -65,8 +65,8 @@ export interface MatchState {
 }
 
 export interface MatchInput extends SnailInput {
-  /** Fire now: direction (radians, screen coords) and pull in [0, 1]. */
-  readonly fire: { readonly angle: number; readonly power: number } | null;
+  /** Fire now with this pull (see Aim). */
+  readonly fire: Aim | null;
   readonly weapon: WeaponId | null;
   /** Hide in the shell instead of shooting. */
   readonly hide: boolean;
@@ -154,6 +154,20 @@ export function hasAmmo(ammo: Ammo, weapon: WeaponId): boolean {
   return left === null || left > 0;
 }
 
+/**
+ * A hash of the whole match state (FNV-1a over its JSON), for spotting desyncs: two clients
+ * that stepped the same inputs must get the same number.
+ */
+export function matchChecksum(state: MatchState): number {
+  const s = JSON.stringify(state);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
 /** Ticks left on the turn timer while aiming (0 otherwise). */
 export function aimTicksLeft(state: MatchState): number {
   return state.phase === 'aim' ? Math.max(0, TURN.aimTicks - state.phaseTicks) : 0;
@@ -221,7 +235,7 @@ function fire(
   const snail = s.snails[s.active];
   const ammo = s.ammo[snail?.team ?? 0];
   if (!snail?.alive || !snail.grounded || !ammo || !hasAmmo(ammo, s.weapon)) return s;
-  const facing: 1 | -1 = Math.cos(shot.angle) >= 0 ? 1 : -1;
+  const facing: 1 | -1 = shot.x >= 0 ? 1 : -1;
   const left = ammo[s.weapon];
   events.push({ kind: 'fire', snail: snail.id });
   return {
@@ -230,7 +244,7 @@ function fire(
     ammo: s.ammo.map((a, t) =>
       t === snail.team && left !== null ? { ...a, [s.weapon]: left - 1 } : a,
     ),
-    projectile: launch(snail, s.weapon, shot.angle, shot.power),
+    projectile: launch(snail, s.weapon, shot),
     phase: 'flight',
     phaseTicks: 0,
   };

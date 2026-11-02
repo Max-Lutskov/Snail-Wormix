@@ -58,19 +58,26 @@ export function muzzle(snail: Snail): { x: number; y: number } {
 }
 
 /**
- * A shot fired by `snail` toward `angle` (radians, screen coords: 0 = right, -π/2 = up) at
- * `power` in [0, 1] of the weapon's max speed.
+ * The pull of a shot: its direction (screen coords, y down) scaled by the power in [0, 1].
+ * Given as a vector, not an angle, so no sin/cos runs in the simulation: those may differ in
+ * the last bit between JS engines, and online every client must compute the same flight.
  */
-export function launch(snail: Snail, weapon: WeaponId, angle: number, power: number): Projectile {
-  const p = Math.min(1, Math.max(0, power));
-  const speed = WEAPONS[weapon].maxSpeed * p;
+export interface Aim {
+  readonly x: number;
+  readonly y: number;
+}
+
+/** A shot fired by `snail` with `aim` (longer than 1 counts as full power). */
+export function launch(snail: Snail, weapon: WeaponId, aim: Aim): Projectile {
+  const len = Math.sqrt(aim.x * aim.x + aim.y * aim.y);
+  const k = (len > 1 ? 1 / len : 1) * WEAPONS[weapon].maxSpeed;
   const { x, y } = muzzle(snail);
   return {
     weapon,
     x,
     y,
-    vx: Math.cos(angle) * speed,
-    vy: Math.sin(angle) * speed,
+    vx: aim.x * k,
+    vy: aim.y * k,
     owner: snail.id,
     age: 0,
     drill: null,
