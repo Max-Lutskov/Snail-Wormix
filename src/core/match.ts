@@ -2,6 +2,7 @@
  * A match: snails take turns, one shot each, until one team is left.
  *
  * Turn flow (all in ticks, 60 per second):
+ *   intro   a short pause: whose turn it is, the camera glides over; no input, no timer
  *   aim     the active snail crawls, jumps and may fire once or hide in its shell (which
  *           ends the turn at once); ends at the turn timer
  *   flight  the shot flies; nobody moves on purpose
@@ -29,6 +30,7 @@ import { addCrater, type Crater, type TerrainState } from './terrain/state';
 import { DAMAGE_REACH, WEAPON_IDS, WEAPONS, type WeaponId } from './weapons';
 
 export const TURN = {
+  introTicks: 75,
   aimTicks: 30 * 60,
   retreatTicks: 3 * 60,
   /** Settling lasts at least this long, and at most settleMaxTicks even if a snail keeps moving. */
@@ -38,7 +40,7 @@ export const TURN = {
 
 export const TEAMS = 2;
 
-export type Phase = 'aim' | 'flight' | 'retreat' | 'settle' | 'over';
+export type Phase = 'intro' | 'aim' | 'flight' | 'retreat' | 'settle' | 'over';
 
 export type Ammo = Readonly<Record<WeaponId, number | null>>;
 
@@ -135,7 +137,7 @@ export function createMatch(
     terrain,
     snails,
     active: 0,
-    phase: 'aim',
+    phase: 'intro',
     phaseTicks: 0,
     turn: 1,
     wind,
@@ -290,6 +292,8 @@ function fly(
 function advancePhase(s: MatchState, events: MatchEvent[]): MatchState {
   const activeAlive = s.snails[s.active]?.alive === true;
   switch (s.phase) {
+    case 'intro':
+      return s.phaseTicks >= TURN.introTicks ? { ...s, phase: 'aim', phaseTicks: 0 } : s;
     case 'aim':
       return s.phaseTicks >= TURN.aimTicks || !activeAlive ? settle(s) : s;
     case 'retreat':
@@ -339,7 +343,7 @@ function nextTurn(s: MatchState, events: MatchEvent[]): MatchState {
     ...s,
     snails,
     active: next,
-    phase: 'aim',
+    phase: 'intro',
     phaseTicks: 0,
     turn: s.turn + 1,
     wind,

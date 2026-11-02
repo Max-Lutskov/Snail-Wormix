@@ -35,6 +35,8 @@ export interface HudState {
   }[];
   /** The shell button: usable, greyed out (hid last turn), or hidden (not aiming). */
   readonly hide: 'ready' | 'cooldown' | null;
+  /** Between turns: whose turn starts (a big banner). */
+  readonly banner: { readonly text: string; readonly color: string } | null;
   /** Once over: the winning team, or -1 for a draw; null while playing. */
   readonly winner: number | null;
 }
@@ -69,6 +71,8 @@ export class HudScene extends Phaser.Scene {
   /** Pointers holding a crawl button, by pointer id. Survives HUD rebuilds. */
   private held = new Map<number, -1 | 1>();
   private touch = false;
+  /** The banner on screen, so a rebuild during the same intro doesn't replay its entrance. */
+  private bannerText: string | null = null;
 
   constructor() {
     super({ key: 'HudScene', active: true });
@@ -208,6 +212,8 @@ export class HudScene extends Phaser.Scene {
     }
     if (this.touch && state.winner === null) this.controls(W, Hh);
     if (state.winner !== null) this.victory(W, Hh, state);
+    if (state.banner) this.banner(W, Hh, state.banner);
+    else this.bannerText = null;
   }
 
   /** The shell slot: a spiral shell; taps hide the snail (ART_SPEC.md, "Ховається"). */
@@ -307,6 +313,33 @@ export class HudScene extends Phaser.Scene {
         this.game.events.emit(HUD_JUMP);
       },
     );
+  }
+
+  /** "Хід: Червоні" in the middle of the screen while the next turn's intro plays. */
+  private banner(W: number, Hh: number, banner: NonNullable<HudState['banner']>): void {
+    const t = this.add
+      .text(0, 0, banner.text, {
+        fontFamily: FONT,
+        fontSize: '34px',
+        fontStyle: 'bold',
+        color: banner.color,
+        stroke: tokens.colors.snail.outline,
+        strokeThickness: 7,
+      })
+      .setResolution(2)
+      .setOrigin(0.5);
+    const w = t.width + 64;
+    const h = 68;
+    const bg = this.add.graphics();
+    bg.fillStyle(PANEL, H.panelOpacity).fillRoundedRect(-w / 2, -h / 2, w, h, h / 2);
+    bg.lineStyle(3, ACCENT, 1).strokeRoundedRect(-w / 2, -h / 2, w, h, h / 2);
+    const box = this.add.container(W / 2, Hh * 0.3, [bg, t]);
+    this.images.push(box);
+    if (this.bannerText !== banner.text) {
+      this.bannerText = banner.text;
+      box.setScale(0.6).setAlpha(0);
+      this.tweens.add({ targets: box, scale: 1, alpha: 1, duration: 260, ease: 'Back.easeOut' });
+    }
   }
 
   /** Wind: an arrow-leaf leaning with the wind and its strength 0–10. */

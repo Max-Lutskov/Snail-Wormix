@@ -3,6 +3,7 @@ import {
   aimTicksLeft,
   canHide,
   createMatch,
+  TURN,
   stepMatch,
   type MatchEvent,
   type MatchInput,
@@ -92,6 +93,8 @@ export class MatchScene extends Phaser.Scene {
   /** Discrete inputs wait here until the next tick consumes them. */
   private queued: Omit<MatchInput, 'move'> = { jump: false, fire: null, weapon: null, hide: false };
   private hudJson = '';
+  /** Where the camera was when the current turn's intro began: it glides from here. */
+  private glideFrom: { x: number; y: number } | null = null;
   /** Crawl direction held on the on-screen buttons. */
   private touchMove: MatchInput['move'] = 0;
 
@@ -267,6 +270,9 @@ export class MatchScene extends Phaser.Scene {
         if (s) this.popup(s.x, s.y - SNAIL.height - 30, `-${e.amount}`);
         break;
       }
+      case 'turn':
+        this.glideFrom = this.cameras.main.midPoint.clone();
+        break;
       default:
         break;
     }
@@ -319,13 +325,23 @@ export class MatchScene extends Phaser.Scene {
     });
   }
 
-  /** Eases the camera toward the shot in flight, or the active snail. */
+  /**
+   * Eases the camera toward the shot in flight, or the active snail. During a turn's intro
+   * it glides there instead, easing in and out, so the hand-over doesn't jerk.
+   */
   private follow(): void {
     const p = this.match.projectile;
     const snail = this.match.snails[this.match.active];
     const target = p ?? (snail?.alive ? snail : null);
     if (!target) return;
     const camera = this.cameras.main;
+    if (this.match.phase === 'intro' && this.glideFrom) {
+      const t = Math.min(1, this.match.phaseTicks / (TURN.introTicks * 0.85));
+      const e = 0.5 - Math.cos(Math.PI * t) / 2;
+      const from = this.glideFrom;
+      camera.centerOn(from.x + (target.x - from.x) * e, from.y + (target.y - from.y) * e);
+      return;
+    }
     const { x, y } = camera.midPoint;
     camera.centerOn(x + (target.x - x) * CAMERA_LERP, y + (target.y - y) * CAMERA_LERP);
   }
@@ -351,6 +367,13 @@ export class MatchScene extends Phaser.Scene {
         selected: id === m.weapon,
       })),
       hide: m.phase !== 'aim' ? null : canHide(m) ? 'ready' : 'cooldown',
+      banner:
+        m.phase === 'intro'
+          ? {
+              text: `Хід: ${TEAM_NAMES[team] ?? `Команда ${team + 1}`}`,
+              color: teamColor(team),
+            }
+          : null,
       winner: m.winner,
     };
     const json = JSON.stringify(state);
@@ -450,6 +473,7 @@ export class MatchScene extends Phaser.Scene {
     this.water.setLevel(this.layout.waterLevel);
 
     this.match = createMatch(terrain, this.layout, Math.floor(Math.random() * 2 ** 31));
+    this.glideFrom = this.cameras.main.midPoint.clone();
     for (const v of this.snailViews) v.destroy();
     this.snailViews = this.match.snails.map((s) => new SnailView(this, s));
     this.shotView.update(null);

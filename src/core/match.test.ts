@@ -15,10 +15,13 @@ import type { TerrainLayout } from './terrain/layout';
 import { checksum } from './terrain/mask';
 import { buildTerrain, createTerrainState } from './terrain/state';
 
+/** A new match on generated hills, past the first turn's intro. */
 function setup(seed = 3): { state: MatchState; layout: TerrainLayout } {
   const terrain = createTerrainState({ kind: 'hills', seed: 1 });
   const layout = buildTerrain(terrain);
-  return { state: createMatch(terrain, layout, seed), layout };
+  let state = createMatch(terrain, layout, seed);
+  while (state.phase === 'intro') state = stepMatch(state, NO_INPUT, layout).state;
+  return { state, layout };
 }
 
 /** Steps until `done` or `limit` ticks; collects events. */
@@ -42,6 +45,19 @@ function runUntil(
 const SHOOT_DOWN: MatchInput = { ...NO_INPUT, fire: { angle: Math.PI / 2, power: 0.3 } };
 
 describe('match setup', () => {
+  it('opens each turn with a short intro that takes no input', () => {
+    const terrain = createTerrainState({ kind: 'hills', seed: 1 });
+    const layout = buildTerrain(terrain);
+    const start = createMatch(terrain, layout, 3);
+    expect(start.phase).toBe('intro');
+    const moved = stepMatch(start, { ...NO_INPUT, move: 1, fire: { angle: 0, power: 1 } }, layout);
+    expect(moved.state.phase).toBe('intro');
+    expect(moved.state.snails[0]?.x).toBe(start.snails[0]?.x);
+    const r = runUntil(start, layout, (s) => s.phase === 'aim');
+    expect(r.state.phaseTicks).toBe(0);
+    expect(aimTicksLeft(r.state)).toBe(TURN.aimTicks);
+  });
+
   it('puts one snail per team on the spawns, team 0 to aim, wind within bounds', () => {
     const { state } = setup();
     expect(state.snails.map((s) => s.team)).toEqual([0, 1]);
@@ -87,7 +103,7 @@ describe('turns', () => {
   it('passes the turn when the timer runs out without a shot', () => {
     const { state, layout } = setup();
     const r = runUntil(state, layout, (s) => s.active === 1);
-    expect(r.state.phase).toBe('aim');
+    expect(r.state.phase).toBe('intro');
     expect(r.state.turn).toBe(2);
   });
 
