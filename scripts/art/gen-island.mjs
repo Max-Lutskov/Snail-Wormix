@@ -1,12 +1,11 @@
 // Generates the "island" test map (public/maps/island): one organic island in the water, the
 // reference piece for the terrain style. The materials come from SVG filters rendered by resvg,
 // not from repeated primitives: the soil is a lit fractal-noise texture under a rounded bevel,
-// stones are irregular blobs lit from the top left with soft cast shadows, and the grass is
-// clusters of curved blades with a specular gloss per cluster.
+// stones are irregular blobs lit from the top left with soft cast shadows, and the grass is one
+// continuous cap of rounded clumps with a lit fibre texture (no separate blades).
 //
-// Layers: terrain.svg is solid (soil body, stones, turf band); back.svg holds the tall dark
-// grass behind; grass.svg holds the main grass clusters and the hanging roots (erased by
-// craters). Seeded, so the output is stable. Usage: node scripts/art/gen-island.mjs
+// Layers: terrain.svg is solid (soil body, stones, grass cap); back.svg holds a darker row of
+// grass clumps behind; grass.svg holds the hanging roots (erased by craters). Seeded, so the output is stable. Usage: node scripts/art/gen-island.mjs
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { f, makeRng, OUT } from './paint-lib.mjs';
 
@@ -128,29 +127,7 @@ const soilDefs =
   `<stop offset="0" stop-color="#140B05" stop-opacity="0"/>` +
   `<stop offset="1" stop-color="#140B05" stop-opacity=".55"/></linearGradient>`;
 
-// Grass: per-blade vertical gradients (light tips, dark roots) and a specular gloss per cluster.
-const FRONT = [
-  ['#D2F483', '#6DBE3E', '#2A6A1C'],
-  ['#BDEB6E', '#5DAE36', '#24601A'],
-  ['#A9E05C', '#4FA02F', '#1F5517'],
-  ['#C8EE7C', '#76C445', '#2F7420'],
-];
-const BACK = [
-  ['#7DBA45', '#3D7E28', '#173F10'],
-  ['#6CA83D', '#356F22', '#143A0E'],
-];
-const grad = (id, [a, b, c]) =>
-  `<linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${a}"/>` +
-  `<stop offset=".5" stop-color="${b}"/><stop offset="1" stop-color="${c}"/></linearGradient>`;
-const grassDefs =
-  FRONT.map((g, i) => grad(`gf${i}`, g)).join('') +
-  BACK.map((g, i) => grad(`gb${i}`, g)).join('') +
-  `<filter id="gloss" x="-10%" y="-10%" width="120%" height="120%">` +
-  `<feGaussianBlur in="SourceAlpha" stdDeviation="1.8" result="b"/>` +
-  `<feSpecularLighting in="b" surfaceScale="4" specularConstant=".55" specularExponent="20" lighting-color="#F4FFD2" result="s">` +
-  `<feDistantLight azimuth="225" elevation="38"/></feSpecularLighting>` +
-  `<feComposite in="s" in2="SourceAlpha" operator="in" result="s2"/>` +
-  `<feComposite in="SourceGraphic" in2="s2" operator="arithmetic" k2="1" k3=".4"/></filter>` +
+const rootDefs =
   `<linearGradient id="root" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#B08458"/>` +
   `<stop offset=".5" stop-color="#7E5534"/><stop offset="1" stop-color="#4A2E1A"/></linearGradient>`;
 
@@ -251,145 +228,136 @@ for (let i = 0; i < 16; i++) {
   );
 }
 
-// --- Turf ---------------------------------------------------------------------------------------
-// A solid green band along the top whose lower edge hangs in rounded tongues of varied length,
-// longer on the shoulders. Lit along the top, shaded inside the lower edge.
+// --- Grass cap ----------------------------------------------------------------------------------
+// The grass is one continuous textured cap over the soil, not separate blades: a thick green
+// band whose top is a row of soft rounded clumps and whose lower edge hangs over the soil in
+// rounded tongues. Fibre texture (stretched noise, lit) and rounded volume (bevel) come from
+// filters; soft dark creases between the clumps separate them.
 
-const turfTop = [];
-const turfLow = [];
+/** Points along the top surface pushed out along the normal by d(x). */
+function offsetEdge(d) {
+  const pts = [];
+  for (let x = X0 + 6; x <= X1 - 6; x += 3) {
+    const n = normal(x);
+    const k = d(x);
+    pts.push([x + n[0] * k, top(x) + n[1] * k]);
+  }
+  return pts;
+}
+
+/** A row of rounded clumps: height over the edge at x, with valleys where clumps meet. */
+function clumps(min, max, wMin, wMax) {
+  const marks = [];
+  for (let x = X0 + 6; x < X1 + wMax; x += r(wMin, wMax)) marks.push([x, r(min, max)]);
+  const d = (x) => {
+    let i = 0;
+    while (i < marks.length - 2 && marks[i + 1][0] <= x) i++;
+    const [x0, h] = marks[i];
+    const t = Math.min(1, Math.max(0, (x - x0) / (marks[i + 1][0] - x0)));
+    const ends = Math.min(1, Math.min(x - X0, X1 - x) / 60);
+    return 3 + h * ends * Math.sin(Math.PI * t) ** 0.45;
+  };
+  return { d, valleys: marks.map(([x]) => x) };
+}
+
+const front = clumps(5, 11, 22, 46);
+const capTop = offsetEdge(front.d);
+const capLow = [];
 const shadowLow = [];
 {
   let x = X0 + 6;
   while (x < X1 - 6) {
     const w = r(14, 36);
     const shoulder = 1 - Math.min(1, Math.min(x - X0, X1 - x) / 140);
-    const depth = rng.next() < 0.15 ? r(22, 34) : r(5, 14);
+    const depth = rng.next() < 0.18 ? r(20, 34) : r(4, 13);
     // Near the very ends the normal turns sideways: keep the tongues short there.
     const tongue = depth * (1 + shoulder * 0.6) * Math.min(1, Math.min(x - X0, X1 - x) / 50);
     for (let t = 0; t < 1; t += 0.12) {
       const xx = Math.min(X1 - 6, x + w * t);
       const n = normal(xx);
-      const d = 13 + tongue * Math.sin(Math.PI * t) ** 0.7;
-      const y = top(xx);
-      turfLow.push([xx - n[0] * d, y - n[1] * d]);
-      shadowLow.push([xx - n[0] * (d + 10), y - n[1] * (d + 10)]);
+      const d = 16 + tongue * Math.sin(Math.PI * t) ** 0.7;
+      capLow.push([xx - n[0] * d, top(xx) - n[1] * d]);
+      shadowLow.push([xx - n[0] * (d + 10), top(xx) - n[1] * (d + 10)]);
     }
     x += w;
   }
-  for (let xx = X0 + 6; xx <= X1 - 6; xx += 4) {
-    const n = normal(xx);
-    turfTop.push([xx + n[0] * 3, top(xx) + n[1] * 3]);
-  }
 }
-const turfPath = `${poly(turfTop)} L${turfLow
-  .slice()
-  .reverse()
-  .map(([x, y]) => `${f(x)},${f(y)}`)
-  .join(' L')} Z`;
-const turfShadow = `${poly(turfTop)} L${shadowLow
-  .slice()
-  .reverse()
-  .map(([x, y]) => `${f(x)},${f(y)}`)
-  .join(' L')} Z`;
+const band = (upper, lower) =>
+  `${poly(upper)} L${lower
+    .slice()
+    .reverse()
+    .map(([x, y]) => `${f(x)},${f(y)}`)
+    .join(' L')} Z`;
+const capPath = band(capTop, capLow);
+
+/** Dark creases running down from the valleys between clumps. */
+function creases(valleys, d, len) {
+  return valleys
+    .filter((x) => x > X0 + 20 && x < X1 - 20)
+    .map((x) => {
+      const n = normal(x);
+      const a = d(x);
+      const b = a - r(len * 0.6, len);
+      const lean = r(-4, 4);
+      return `M${f(x + n[0] * a)},${f(top(x) + n[1] * a)} L${f(x + lean + n[0] * b)},${f(top(x) + n[1] * b)}`;
+    })
+    .join(' ');
+}
+
+/** The textured fill of a cap: base colour, lit top, shaded bottom, creases, all with fibres. */
+function capFill(clipId, upper, lower, valleys, d, c) {
+  return (
+    `<g filter="url(#capBevel)"><g clip-path="url(#${clipId})"><g filter="url(#fibre)">` +
+    `<rect x="${X0 - 20}" y="250" width="${X1 - X0 + 40}" height="300" fill="${c.base}"/>` +
+    `<path d="${poly(lower)}" fill="none" stroke="${c.shade}" stroke-width="18" opacity=".85" filter="url(#soft4)"/>` +
+    `<path d="${poly(upper)}" fill="none" stroke="${c.light}" stroke-width="11" filter="url(#soft4)"/>` +
+    `<path d="${creases(valleys, d, 16)}" fill="none" stroke="${c.shade}" stroke-width="6" stroke-linecap="round" opacity=".8" filter="url(#soft2)"/>` +
+    `</g></g></g>` +
+    `<path d="${creases(valleys, d, 7)}" fill="none" stroke="${c.line}" stroke-width="1.8" stroke-linecap="round"/>`
+  );
+}
+
+const capDefs =
+  // Fibres: noise stretched along the vertical, lit from the top left.
+  `<filter id="fibre" x="0" y="0" width="1" height="1">` +
+  `<feTurbulence type="fractalNoise" baseFrequency=".12 .028" numOctaves="3" seed="5" result="n"/>` +
+  `<feDiffuseLighting in="n" surfaceScale="2.6" diffuseConstant="1.2" lighting-color="#fff" result="l">` +
+  `<feDistantLight azimuth="225" elevation="55"/></feDiffuseLighting>` +
+  `<feComposite in="SourceGraphic" in2="l" operator="arithmetic" k1="1.15" result="t"/>` +
+  `<feComposite in="t" in2="SourceAlpha" operator="in"/></filter>` +
+  // Rounded volume of the clumps.
+  `<filter id="capBevel" x="-5%" y="-20%" width="110%" height="140%">` +
+  `<feGaussianBlur in="SourceAlpha" stdDeviation="3.5" result="b"/>` +
+  `<feDiffuseLighting in="b" surfaceScale="5" diffuseConstant="1" lighting-color="#fff" result="l">` +
+  `<feDistantLight azimuth="225" elevation="50"/></feDiffuseLighting>` +
+  `<feComposite in="SourceGraphic" in2="l" operator="arithmetic" k1="1.25" result="t"/>` +
+  `<feComposite in="t" in2="SourceAlpha" operator="in"/></filter>`;
+
+const FRONT_CAP = { base: '#58A835', light: '#CDF383', shade: '#1D5014', line: '#173A10' };
+const BACK_CAP = { base: '#3B7E28', light: '#7DBC48', shade: '#163F0F', line: '#0F2C0A' };
 
 const turf =
-  `<path d="${turfShadow}" fill="#0E0703" opacity=".5" filter="url(#soft4)" clip-path="url(#body)"/>` +
-  `<path d="${turfPath}" fill="#4F9C31"/>` +
-  `<g clip-path="url(#turf)">` +
-  `<path d="${poly(turfLow)}" fill="none" stroke="#1B4A12" stroke-width="12" opacity=".75" filter="url(#soft4)"/>` +
-  `<path d="${poly(turfTop)}" fill="none" stroke="#C6F07E" stroke-width="7" filter="url(#soft2)"/></g>` +
-  `<path d="${turfPath}" fill="none" stroke="#173A10" stroke-width="2.6" stroke-linejoin="round"/>`;
+  `<path d="${band(capTop, shadowLow)}" fill="#0E0703" opacity=".5" filter="url(#soft4)" clip-path="url(#body)"/>` +
+  capFill('cap', capTop, capLow, front.valleys, front.d, FRONT_CAP) +
+  `<path d="${capPath}" fill="none" stroke="${FRONT_CAP.line}" stroke-width="2.6" stroke-linejoin="round"/>`;
 
-// --- Grass clusters -----------------------------------------------------------------------------
-
-/**
- * One blade: a curved crescent from a root (x, y) toward `angle`, `len` long and `w` wide, its
- * tip swept sideways by `curl`.
- */
-function bladePath(x, y, angle, len, w, curl) {
-  const dx = Math.cos(angle);
-  const dy = Math.sin(angle);
-  const P = (along, side) => [x + dx * along - dy * side, y + dy * along + dx * side];
-  const bend = (t) => curl * t * t;
-  const pt = (q) => `${f(q[0])},${f(q[1])}`;
-  // The tip is a small rounded cap, not a spike.
-  const tipA = P(len, -w * 0.14 + bend(1));
-  const tipB = P(len, w * 0.1 + bend(1));
-  const cap = P(len + w * 0.3, bend(1) * 1.04);
-  return (
-    `M${pt(P(0, -w * 0.5))} C${pt(P(len * 0.35, -w * 0.66 + bend(0.35)))} ${pt(P(len * 0.75, -w * 0.42 + bend(0.75)))} ${pt(tipA)}` +
-    ` Q${pt(cap)} ${pt(tipB)}` +
-    ` C${pt(P(len * 0.75, w * 0.32 + bend(0.75)))} ${pt(P(len * 0.35, w * 0.55 + bend(0.35)))} ${pt(P(0, w * 0.5))} Z`
-  );
-}
-
-/**
- * A cluster: blades fanning from one base along the surface normal, leaning with `lean`.
- * Middle blades are longer; outer ones curl outward. Some clusters are short and broad-leafed.
- */
-function cluster(x, scale, lean, palette, line) {
-  const n = normal(x);
-  const base = Math.atan2(n[1], n[0]) + lean;
-  const y = top(x) + 7;
-  const count = 6 + Math.floor(rng.next() * 6);
-  const broad = rng.next() < 0.25;
-  const fan = r(1.4, 2.1);
-  const blades = [];
-  for (let i = 0; i < count; i++) {
-    const u = count === 1 ? 0 : i / (count - 1) - 0.5;
-    const len = scale * (broad ? r(16, 24) : r(22, 40)) * (1 - Math.abs(u) * 0.6) * r(0.8, 1.15);
-    const w = broad ? r(10, 14) : r(6.5, 10);
-    const a = base + u * fan + r(-0.12, 0.12);
-    // Outer blades droop outward, so the cluster reads as a soft clump.
-    const curl =
-      (u === 0 ? r(-1, 1) : Math.sign(u)) * len * r(0.2, 0.5) * (0.5 + Math.abs(u) * 1.6);
-    const bx = x + u * 12 * scale + r(-2, 2);
-    blades.push({ d: bladePath(bx, y + r(-2, 2), a, len, w, curl), z: rng.next() });
-  }
-  blades.sort((p, q) => p.z - q.z);
-  const g = blades
-    .map(
-      (b) =>
-        `<path d="${b.d}" fill="url(#${rng.pick(palette)})" stroke="${line}" stroke-width="1.6" stroke-linejoin="round"/>`,
-    )
-    .join('');
-  // A rounded leafy mound at the base ties the blades into one clump.
-  const mound = closed(
-    blobPts(
-      x - n[0] * 4 * scale,
-      y - 4 - n[1] * 4 * scale,
-      13 * scale,
-      0.55,
-      Math.atan2(-n[0], n[1]) * -1,
-      7,
-      0.18,
-    ),
-  );
-  return (
-    `<g filter="url(#gloss)">` +
-    `<path d="${mound}" fill="url(#${palette[0]})" stroke="${line}" stroke-width="1.6"/>${g}</g>`
-  );
-}
-
-/** Slow wave in [0.6, 1.25] along the edge: patches of taller and shorter grass. */
-const patchPh = r(0, 6);
-const patch = (x) => 0.92 + 0.33 * Math.sin(x / 70 + patchPh) * Math.sin(x / 190 + 1.3);
-
-const backGrass = [];
-for (let x = X0 + 30; x < X1 - 30; x += r(14, 24)) {
-  backGrass.push(cluster(x, patch(x) * r(1.1, 1.5), r(-0.25, 0.25), ['gb0', 'gb1'], '#0F2C0A'));
-}
-
-const baseShadows = [];
-const frontGrass = [];
-for (let x = X0 + 24; x < X1 - 24; x += r(13, 22)) {
-  const s = patch(x) * r(0.75, 1.15);
-  const [nx, ny] = normal(x);
-  baseShadows.push(
-    `<ellipse cx="${f(x - nx * 5)}" cy="${f(top(x) - ny * 5)}" rx="${f(12 * s)}" ry="${f(5 * s)}"/>`,
-  );
-  frontGrass.push(cluster(x, s, r(-0.3, 0.3), ['gf0', 'gf1', 'gf2', 'gf3'], '#173A10'));
-}
+// Behind: a darker, taller row of clumps peeking over the front cap, for depth.
+const backRow = clumps(12, 22, 30, 60);
+const backTop = offsetEdge(backRow.d);
+const backPath = band(
+  backTop,
+  offsetEdge(() => -24),
+);
+const backCap =
+  capFill(
+    'backCap',
+    backTop,
+    offsetEdge(() => 0),
+    backRow.valleys,
+    backRow.d,
+    BACK_CAP,
+  ) +
+  `<path d="${backPath}" fill="none" stroke="${BACK_CAP.line}" stroke-width="2.4" stroke-linejoin="round"/>`;
 
 // --- Hanging roots ------------------------------------------------------------------------------
 
@@ -427,7 +395,7 @@ const terrain =
   header('solid layer: opaque = solid') +
   `  <defs>${softDefs}${soilDefs}${stoneDefs}` +
   `<clipPath id="body"><path d="${outline}"/></clipPath>` +
-  `<clipPath id="turf"><path d="${turfPath}"/></clipPath></defs>\n` +
+  `${capDefs}<clipPath id="cap"><path d="${capPath}"/></clipPath></defs>\n` +
   `  <g filter="url(#bevel)"><g clip-path="url(#body)">` +
   `<rect x="${X0 - 40}" y="300" width="${X1 - X0 + 80}" height="${H - 300 + 20}" fill="url(#soilBase)" filter="url(#soilTex)"/>` +
   `<g filter="url(#soft12)">${smudges.join('')}</g>` +
@@ -438,15 +406,13 @@ const terrain =
   `  ${protruding.join('')}\n  ${turf}\n</svg>\n`;
 
 const back =
-  header('non-solid back layer: tall dark grass behind the edge') +
-  `  <defs>${grassDefs}</defs>\n  ${backGrass.join('\n  ')}\n</svg>\n`;
+  header('non-solid back layer: a darker row of grass clumps behind the edge') +
+  `  <defs>${softDefs}${capDefs}<clipPath id="backCap"><path d="${backPath}"/></clipPath></defs>\n` +
+  `  ${backCap}\n</svg>\n`;
 
 const grass =
-  header('non-solid front layer: grass clusters and hanging roots, erased by craters') +
-  `  <defs>${softDefs}${grassDefs}</defs>\n` +
-  `  ${roots.join('')}\n` +
-  `  <g fill="#0B2507" opacity=".55" filter="url(#soft4)">${baseShadows.join('')}</g>\n` +
-  `  ${frontGrass.join('\n  ')}\n</svg>\n`;
+  header('non-solid front layer: hanging roots, erased by craters') +
+  `  <defs>${rootDefs}</defs>\n  ${roots.join('')}\n</svg>\n`;
 
 const meta = {
   id: 'island',
