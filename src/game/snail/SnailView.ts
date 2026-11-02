@@ -20,7 +20,25 @@ const CANNON_REST_DEG = -55;
 const TILT_MAX = 0.35;
 const TILT_REACH = 8;
 const DEPTH = 1;
-const TEAM_COLORS = [tokens.colors.teams.green.helmet, tokens.colors.teams.red.helmet] as const;
+const LABEL_DEPTH = 15;
+/** HP label and turn marker heights above the feet, world px. */
+const LABEL_Y = 58;
+const MARKER_Y = 84;
+export const TEAM_COLORS = [
+  tokens.colors.teams.green.helmet,
+  tokens.colors.teams.red.helmet,
+] as const;
+
+export function teamColor(team: number): string {
+  return TEAM_COLORS[team % TEAM_COLORS.length] ?? TEAM_COLORS[0];
+}
+
+export interface SnailViewState {
+  /** The snail whose turn it is: shows the marker. */
+  readonly active: boolean;
+  /** Aim being pulled (radians, screen coords): turns the snail and its cannon. */
+  readonly aim: number | null;
+}
 
 export function preloadSnail(scene: Phaser.Scene): void {
   for (const part of PARTS) {
@@ -37,6 +55,8 @@ export class SnailView {
   private readonly cannon: Phaser.GameObjects.Image;
   private readonly stalks: Phaser.GameObjects.Image[];
   private readonly pupils: Phaser.GameObjects.Image[];
+  private readonly hpText: Phaser.GameObjects.Text;
+  private readonly marker: Phaser.GameObjects.Graphics;
   private walkPhase = 0;
   private lastX: number;
   private tilt = 0;
@@ -53,7 +73,7 @@ export class SnailView {
     );
     const helmet = img('helmet')
       .setOrigin(BODY_ORIGIN.x, BODY_ORIGIN.y)
-      .setTint(hexToInt(TEAM_COLORS[snail.team % TEAM_COLORS.length] ?? TEAM_COLORS[0]));
+      .setTint(hexToInt(teamColor(snail.team)));
     this.pupils = T.eyestalkMounts.map(() => img('pupil'));
     this.art = scene.add.container(-ART_CENTER_X * ART_TO_WORLD, 0, [
       this.cannon,
@@ -66,13 +86,37 @@ export class SnailView {
     this.art.setScale(ART_TO_WORLD);
     this.root = scene.add.container(snail.x, snail.y, [this.art]).setDepth(DEPTH);
     this.lastX = snail.x;
+
+    this.hpText = scene.add
+      .text(snail.x, snail.y - LABEL_Y, String(snail.hp), {
+        fontFamily: 'Trebuchet MS, Arial, sans-serif',
+        fontSize: '13px',
+        fontStyle: 'bold',
+        color: teamColor(snail.team),
+        stroke: tokens.colors.snail.outline,
+        strokeThickness: 4,
+        resolution: 3,
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(LABEL_DEPTH);
+    // Turn marker (ART_SPEC.md, HUD): a yellow triangle pointing down, thick outline.
+    this.marker = scene.add.graphics().setDepth(LABEL_DEPTH);
+    this.marker.fillStyle(hexToInt(tokens.colors.hud.accent), 1);
+    this.marker.lineStyle(2.5, hexToInt(tokens.colors.snail.outline), 1);
+    this.marker.fillTriangle(-8, -10, 8, -10, 0, 2);
+    this.marker.strokeTriangle(-8, -10, 8, -10, 0, 2);
   }
 
   /** Moves the view to the snail's state; `time` in ms drives idle motion. */
-  update(snail: Snail, mask: TerrainMask, time: number): void {
+  update(snail: Snail, mask: TerrainMask, time: number, view: SnailViewState): void {
+    const facing = view.aim === null ? snail.facing : Math.cos(view.aim) >= 0 ? 1 : -1;
     this.root.setPosition(snail.x, snail.y);
-    this.root.setScale(snail.facing, 1);
+    this.root.setScale(facing, 1);
     this.root.setAlpha(snail.alive ? 1 : Math.max(0, this.root.alpha - 0.03));
+    this.hpText.setPosition(snail.x, snail.y - LABEL_Y).setText(String(snail.hp));
+    this.hpText.setAlpha(this.root.alpha);
+    this.marker.setVisible(view.active && snail.alive);
+    this.marker.setPosition(snail.x, snail.y - MARKER_Y + Math.sin(time / 180) * 3);
 
     const moved = Math.abs(snail.x - this.lastX);
     this.lastX = snail.x;
@@ -88,6 +132,15 @@ export class SnailView {
     const targetTilt = snail.grounded ? this.groundTilt(snail, mask) : 0;
     this.tilt += (targetTilt - this.tilt) * 0.2;
     this.root.setRotation(this.tilt);
+
+    // The cannon follows the aim. The root is flipped, then tilted, so undo both.
+    const local =
+      view.aim === null
+        ? Phaser.Math.DegToRad(CANNON_REST_DEG)
+        : facing === 1
+          ? view.aim - this.tilt
+          : Math.PI - view.aim + this.tilt;
+    this.cannon.setRotation(local);
 
     // Eyestalks: sway at rest, bob while crawling, fly up in the air.
     const sway = Math.sin(time / 600) * 4;
@@ -120,5 +173,7 @@ export class SnailView {
 
   destroy(): void {
     this.root.destroy();
+    this.hpText.destroy();
+    this.marker.destroy();
   }
 }

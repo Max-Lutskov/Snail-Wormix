@@ -1,0 +1,117 @@
+/**
+ * A shot in flight: gravity and the turn's wind act on it each tick; it moves in substeps of at
+ * most 1 px and explodes on the first ground pixel or snail it touches. Falling into the water
+ * or leaving the world through a side removes it without a blast.
+ */
+
+import { SNAIL, type Snail } from './snail/snail';
+import { isSolid, type TerrainMask } from './terrain/mask';
+import { WEAPONS, type WeaponId } from './weapons';
+
+/** World gravity on shots, px per tick². */
+export const SHOT_GRAVITY = 0.15;
+/** Strongest wind, px per tick² (sideways). */
+export const MAX_WIND = 0.018;
+/** Ticks after launch during which the shot passes through the snail that fired it. */
+const OWNER_GRACE_TICKS = 8;
+/** Shots leaving further than this past the world's sides are gone. */
+const SIDE_MARGIN = 200;
+
+export interface Projectile {
+  readonly weapon: WeaponId;
+  readonly x: number;
+  readonly y: number;
+  readonly vx: number;
+  readonly vy: number;
+  /** Id of the snail that fired it. */
+  readonly owner: number;
+  readonly age: number;
+}
+
+export interface ShotWorld {
+  readonly mask: TerrainMask;
+  readonly waterLevel: number;
+  /** Sideways acceleration this turn, in [-MAX_WIND, MAX_WIND]. */
+  readonly wind: number;
+  readonly snails: readonly Snail[];
+}
+
+export type ShotStep =
+  | { readonly kind: 'flying'; readonly projectile: Projectile }
+  | { readonly kind: 'explode'; readonly x: number; readonly y: number }
+  | { readonly kind: 'gone' };
+
+/** Where a snail's shots leave from: the middle of its body. */
+export function muzzle(snail: Snail): { x: number; y: number } {
+  return { x: snail.x, y: snail.y - SNAIL.height / 2 };
+}
+
+/**
+ * A shot fired by `snail` toward `angle` (radians, screen coords: 0 = right, -π/2 = up) at
+ * `power` in [0, 1] of the weapon's max speed.
+ */
+export function launch(snail: Snail, weapon: WeaponId, angle: number, power: number): Projectile {
+  const p = Math.min(1, Math.max(0, power));
+  const speed = WEAPONS[weapon].maxSpeed * p;
+  const { x, y } = muzzle(snail);
+  return {
+    weapon,
+    x,
+    y,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
+    owner: snail.id,
+    age: 0,
+  };
+}
+
+function hitsSnail(p: Projectile, x: number, y: number, snails: readonly Snail[]): boolean {
+  for (const s of snails) {
+    if (!s.alive || (s.id === p.owner && p.age < OWNER_GRACE_TICKS)) continue;
+    if (
+      x >= s.x - SNAIL.halfWidth &&
+      x <= s.x + SNAIL.halfWidth + 1 &&
+      y >= s.y - SNAIL.height &&
+      y < s.y
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Advances the shot by one tick. */
+export function stepProjectile(p: Projectile, world: ShotWorld): ShotStep {
+  const w = WEAPONS[p.weapon];
+  const vx = p.vx + world.wind * w.wind;
+  const vy = p.vy + SHOT_GRAVITY * w.gravity;
+  const n = Math.max(1, Math.ceil(Math.max(Math.abs(vx), Math.abs(vy))));
+  let { x, y } = p;
+  for (let i = 0; i < n; i++) {
+    x += vx / n;
+    y += vy / n;
+    if (isSolid(world.mask, x, y) || hitsSnail(p, x, y, world.snails)) {
+      return { kind: 'explode', x, y };
+    }
+    if (y >= world.waterLevel) return { kind: 'gone' };
+  }
+  if (x < -SIDE_MARGIN || x > world.mask.width + SIDE_MARGIN) return { kind: 'gone' };
+  return { kind: 'flying', projectile: { ...p, x, y, vx, vy, age: p.age + 1 } };
+}
+
+/** The first `ticks` positions of a shot's flight (for the aim preview); stops at impact. */
+export function previewPath(
+  p: Projectile,
+  world: ShotWorld,
+  ticks: number,
+): { x: number; y: number }[] {
+  const points: { x: number; y: number }[] = [];
+  let shot = p;
+  for (let i = 0; i < ticks; i++) {
+    const step = stepProjectile(shot, world);
+    if (step.kind !== 'flying') break;
+    shot = step.projectile;
+    points.push({ x: shot.x, y: shot.y });
+  }
+  return points;
+}

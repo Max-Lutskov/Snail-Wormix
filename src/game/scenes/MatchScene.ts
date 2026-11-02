@@ -1,23 +1,23 @@
 import Phaser from 'phaser';
 import {
-  applyExplosion,
-  spawnSnail,
-  stepSnail,
-  type Snail,
-  type SnailInput,
-  type SnailWorld,
-} from '../../core/snail/snail';
+  aimTicksLeft,
+  createMatch,
+  stepMatch,
+  type MatchEvent,
+  type MatchInput,
+  type MatchState,
+} from '../../core/match';
+import { MAX_WIND, type ShotWorld } from '../../core/projectile';
+import { SNAIL } from '../../core/snail/snail';
 import { checksum } from '../../core/terrain/mask';
 import type { TerrainLayout } from '../../core/terrain/layout';
 import {
-  addCrater,
   buildBaseTerrain,
   buildTerrain,
   createTerrainState,
-  type Crater,
   type TerrainSource,
-  type TerrainState,
 } from '../../core/terrain/state';
+import { WEAPON_IDS, type WeaponId } from '../../core/weapons';
 import { ART_SCALE, WORLD_HEIGHT, WORLD_WIDTH } from '../../core/world';
 import { tokens } from '../art/tokens';
 import { worldZoom } from '../display';
@@ -25,14 +25,16 @@ import { createParallax, createSky } from '../env/sky';
 import { Water } from '../env/Water';
 import { playExplosion } from '../fx/explosion';
 import { ensureFxTextures } from '../fx/fxTextures';
+import { Slingshot } from '../input/Slingshot';
 import { mapLookup, preloadMaps, readMaps, type LoadedMap } from '../maps/maps';
 import { DecorView, MUSHROOM_SVG_SCALE, MUSHROOM_TEXTURE } from '../terrain/DecorView';
 import { paintGardenArt, type SoilTile } from '../terrain/terrainArt';
 import { paintHillsGrass } from '../terrain/grassArt';
 import { GrassView } from '../terrain/GrassView';
 import { TerrainView } from '../terrain/TerrainView';
-import { preloadSnail, SnailView } from '../snail/SnailView';
-import { DEBUG_INFO } from './HudScene';
+import { preloadShots, ShotView } from '../snail/ShotView';
+import { preloadSnail, SnailView, teamColor } from '../snail/SnailView';
+import { DEBUG_INFO, HUD_RESTART, HUD_SELECT_WEAPON, HUD_STATE, type HudState } from './HudScene';
 
 /** Simulation tick (core steps are fixed at 60 per second). */
 const TICK_MS = 1000 / 60;
@@ -48,14 +50,17 @@ const SOIL_TILE_KEY = 'soil-tile';
 const CAMERA_MARGIN = 0;
 /** Grass fringe: over the ground, under its decor (so mushrooms aren't buried). */
 const GRASS_DEPTH = 0.4;
+const TEAM_NAMES = ['Зелені', 'Червоні'] as const;
+const WIND_KEY = 'leaf-wind';
+const WEAPON_KEYS = ['ONE', 'TWO', 'THREE', 'FOUR'] as const;
 
 /**
- * Match scene. For now a sandbox: two snails on the terrain.
- * ←/→ or A/D = crawl, W/↑/space = jump, Tab = other snail, click = pea crater,
- * shift+click = acorn crater, R = new generated hills, M = next drawn map.
+ * Match scene: a hot-seat duel, one snail per team, taking turns.
+ * ←/→ or A/D = crawl, W/↑/space = jump, drag anywhere and release = slingshot shot,
+ * 1/2 = weapon, Enter = new match when over, R = new generated hills, M = next drawn map.
  */
 export class MatchScene extends Phaser.Scene {
-  private state!: TerrainState;
+  private match!: MatchState;
   private layout!: TerrainLayout;
   private view: TerrainView | null = null;
   private decor: DecorView | null = null;
@@ -70,12 +75,17 @@ export class MatchScene extends Phaser.Scene {
     right: Phaser.Input.Keyboard.Key[];
     jump: Phaser.Input.Keyboard.Key[];
   } = { left: [], right: [], jump: [] };
-  private snails: Snail[] = [];
   private snailViews: SnailView[] = [];
-  private active = 0;
+  private shotView!: ShotView;
+  private slingshot!: Slingshot;
   private tickCarry = 0;
-  /** A jump press waits here until the next tick consumes it. */
-  private jumpQueued = false;
+  /** Discrete inputs wait here until the next tick consumes them. */
+  private queued: { jump: boolean; fire: MatchInput['fire']; weapon: WeaponId | null } = {
+    jump: false,
+    fire: null,
+    weapon: null,
+  };
+  private hudJson = '';
 
   constructor() {
     super('MatchScene');
@@ -85,7 +95,9 @@ export class MatchScene extends Phaser.Scene {
     const size = tokens.terrain.soilTileSize * ART_SCALE;
     this.load.svg(SOIL_TILE_KEY, 'art/soil-tile.svg', { width: size, height: size });
     this.load.svg(MUSHROOM_TEXTURE, 'art/mushroom.svg', { scale: MUSHROOM_SVG_SCALE });
+    this.load.svg(WIND_KEY, 'art/leaf-wind.svg', { scale: 4 });
     preloadSnail(this);
+    preloadShots(this, WEAPON_IDS);
     preloadMaps(this);
   }
 
@@ -107,12 +119,27 @@ export class MatchScene extends Phaser.Scene {
       this.scale.off(Phaser.Scale.Events.RESIZE, this.fitCamera);
     });
 
+    this.shotView = new ShotView(this);
+    this.slingshot = new Slingshot(
+      this,
+      () => this.canAim(),
+      (aim) => {
+        this.queued.fire = aim;
+      },
+    );
     this.loadTerrain(this.startSource());
 
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      const shift = (pointer.event as MouseEvent | undefined)?.shiftKey === true;
-      const r = shift ? tokens.ammo.acorn.craterRadius : tokens.ammo.pea.craterRadius;
-      this.explode({ x: pointer.worldX, y: pointer.worldY, r });
+    const selectWeapon = (id: WeaponId): void => {
+      this.queued.weapon = id;
+    };
+    const restart = (): void => {
+      if (this.match.phase === 'over') this.loadTerrain(this.match.terrain.source);
+    };
+    this.game.events.on(HUD_SELECT_WEAPON, selectWeapon);
+    this.game.events.on(HUD_RESTART, restart);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.game.events.off(HUD_SELECT_WEAPON, selectWeapon);
+      this.game.events.off(HUD_RESTART, restart);
     });
 
     const keyboard = this.input.keyboard;
@@ -125,13 +152,17 @@ export class MatchScene extends Phaser.Scene {
       };
       for (const k of this.keys.jump) {
         k.on('down', () => {
-          this.jumpQueued = true;
+          this.queued.jump = true;
         });
       }
-      const tab = keyboard.addKey(K.TAB);
-      tab.on('down', () => {
-        this.active = (this.active + 1) % Math.max(1, this.snails.length);
+      WEAPON_IDS.forEach((id, i) => {
+        const name = WEAPON_KEYS[i];
+        if (name)
+          keyboard.on(`keydown-${name}`, () => {
+            selectWeapon(id);
+          });
       });
+      keyboard.on('keydown-ENTER', restart);
       keyboard.on('keydown-R', () => {
         this.loadTerrain({ kind: 'hills', seed: Math.floor(Math.random() * 1_000_000) });
       });
@@ -143,29 +174,131 @@ export class MatchScene extends Phaser.Scene {
 
   override update(time: number, delta: number): void {
     const move = ((this.keys.right.some((k) => k.isDown) ? 1 : 0) -
-      (this.keys.left.some((k) => k.isDown) ? 1 : 0)) as SnailInput['move'];
-    const world: SnailWorld = { mask: this.layout.mask, waterLevel: this.layout.waterLevel };
+      (this.keys.left.some((k) => k.isDown) ? 1 : 0)) as MatchInput['move'];
     this.tickCarry = Math.min(this.tickCarry + delta, TICK_MS * MAX_TICKS_PER_FRAME);
     while (this.tickCarry >= TICK_MS) {
       this.tickCarry -= TICK_MS;
-      const input: SnailInput = { move, jump: this.jumpQueued };
-      this.jumpQueued = false;
-      this.snails = this.snails.map((s, i) =>
-        stepSnail(s, i === this.active ? input : { move: 0, jump: false }, world),
-      );
+      const input: MatchInput = { move, ...this.queued };
+      this.queued = { jump: false, fire: null, weapon: null };
+      const r = stepMatch(this.match, input, this.layout);
+      this.match = r.state;
+      for (const e of r.events) this.onEvent(e);
     }
-    this.snails.forEach((s, i) => this.snailViews[i]?.update(s, this.layout.mask, time));
-    this.followActive();
+    if (!this.canAim()) this.slingshot.cancel();
+
+    const aim = this.slingshot.current();
+    this.match.snails.forEach((s, i) =>
+      this.snailViews[i]?.update(s, this.layout.mask, time, {
+        active: i === this.match.active && this.match.phase !== 'over',
+        aim: i === this.match.active && aim ? aim.angle : null,
+      }),
+    );
+    this.slingshot.draw(this.match.snails[this.match.active], this.match.weapon, this.shotWorld());
+    this.shotView.update(this.match.projectile);
+    this.follow();
     this.water.update(time);
+    this.publishHud();
   }
 
-  /** Eases the camera toward the active snail. */
-  private followActive(): void {
-    const snail = this.snails[this.active];
-    if (!snail?.alive) return;
+  private canAim(): boolean {
+    const snail = this.match.snails[this.match.active];
+    return this.match.phase === 'aim' && snail?.alive === true && snail.grounded;
+  }
+
+  private shotWorld(): ShotWorld {
+    return {
+      mask: this.layout.mask,
+      waterLevel: this.layout.waterLevel,
+      wind: this.match.wind,
+      snails: this.match.snails,
+    };
+  }
+
+  private onEvent(e: MatchEvent): void {
+    switch (e.kind) {
+      case 'explosion':
+        // Core has already carved the mask; the views catch up under the flash.
+        playExplosion(this, e.crater, this.layout.mask, () => {
+          this.view?.onCrater(e.crater);
+          this.decor?.remove(e.removedDecor);
+          this.grass?.onCrater(e.crater);
+          this.updateInfo();
+        });
+        break;
+      case 'damage': {
+        const s = this.match.snails.find((x) => x.id === e.snail);
+        if (s) this.popup(s.x, s.y - SNAIL.height - 30, `-${e.amount}`);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  /** A damage number floating up from a snail. */
+  private popup(x: number, y: number, label: string): void {
+    const t = this.add
+      .text(x, y, label, {
+        fontFamily: 'Trebuchet MS, Arial, sans-serif',
+        fontSize: '18px',
+        fontStyle: 'bold',
+        color: tokens.colors.crater.tomatoSplat,
+        stroke: tokens.colors.snail.outline,
+        strokeThickness: 5,
+        resolution: 3,
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(40);
+    this.tweens.add({
+      targets: t,
+      y: y - 36,
+      alpha: 0,
+      delay: 500,
+      duration: 900,
+      onComplete: () => {
+        t.destroy();
+      },
+    });
+  }
+
+  /** Eases the camera toward the shot in flight, or the active snail. */
+  private follow(): void {
+    const p = this.match.projectile;
+    const snail = this.match.snails[this.match.active];
+    const target = p ?? (snail?.alive ? snail : null);
+    if (!target) return;
     const camera = this.cameras.main;
     const { x, y } = camera.midPoint;
-    camera.centerOn(x + (snail.x - x) * CAMERA_LERP, y + (snail.y - y) * CAMERA_LERP);
+    camera.centerOn(x + (target.x - x) * CAMERA_LERP, y + (target.y - y) * CAMERA_LERP);
+  }
+
+  /** Sends the HUD what it shows, when it changed. */
+  private publishHud(): void {
+    const m = this.match;
+    const team = m.snails[m.active]?.team ?? 0;
+    const ammo = m.ammo[team];
+    const state: HudState = {
+      teams: m.snails.map((s) => ({
+        name: TEAM_NAMES[s.team] ?? `Команда ${s.team + 1}`,
+        color: teamColor(s.team),
+        hp: s.hp,
+        maxHp: SNAIL.maxHp,
+      })),
+      activeTeam: team,
+      seconds: m.phase === 'aim' ? Math.ceil(aimTicksLeft(m) / 60) : null,
+      wind: m.wind / MAX_WIND,
+      weapons: WEAPON_IDS.map((id) => ({
+        id,
+        count: ammo?.[id] ?? null,
+        selected: id === m.weapon,
+      })),
+      winner: m.winner,
+    };
+    const json = JSON.stringify(state);
+    if (json !== this.hudJson) {
+      this.hudJson = json;
+      this.registry.set(HUD_STATE, state);
+    }
   }
 
   /** Zooms the camera so the world's full height fills the (physical-pixel) viewport. */
@@ -205,12 +338,13 @@ export class MatchScene extends Phaser.Scene {
   /** Cycles hills → each drawn map → hills. */
   private nextSource(): TerrainSource {
     const ids = [...this.maps.keys()];
-    const current = this.state.source;
+    const current = this.match.terrain.source;
     const at = current.kind === 'map' ? ids.indexOf(current.id) : -1;
     const next = ids[at + 1];
     return next === undefined ? { kind: 'hills', seed: 1 } : { kind: 'map', id: next };
   }
 
+  /** Loads the terrain and starts a new match on it. */
   private loadTerrain(source: TerrainSource): void {
     this.view?.destroy();
     this.decor?.destroy();
@@ -220,8 +354,8 @@ export class MatchScene extends Phaser.Scene {
     this.back = null;
 
     const lookup = mapLookup(this.maps);
-    this.state = createTerrainState(source);
-    this.layout = buildTerrain(this.state, lookup);
+    const terrain = createTerrainState(source);
+    this.layout = buildTerrain(terrain, lookup);
     const map = source.kind === 'map' ? this.maps.get(source.id) : undefined;
     const original = buildBaseTerrain(source, lookup);
     const baseArt = map ? map.rgba : paintGardenArt(original, this.soilTile);
@@ -238,7 +372,7 @@ export class MatchScene extends Phaser.Scene {
       baseArt,
       original,
       this.layout,
-      this.state.craters,
+      terrain.craters,
       map !== undefined,
     ).setDepth(0);
     this.decor = new DecorView(this, this.layout);
@@ -250,47 +384,28 @@ export class MatchScene extends Phaser.Scene {
           : null;
     if (grassArt) {
       const { width, height } = this.layout.mask;
-      this.grass = new GrassView(this, grassArt, width, height, this.state.craters).setDepth(
+      this.grass = new GrassView(this, grassArt, width, height, terrain.craters).setDepth(
         GRASS_DEPTH,
       );
     }
     this.water.setLevel(this.layout.waterLevel);
-    this.spawnSnails();
+
+    this.match = createMatch(terrain, this.layout, Math.floor(Math.random() * 2 ** 31));
+    for (const v of this.snailViews) v.destroy();
+    this.snailViews = this.match.snails.map((s) => new SnailView(this, s));
+    this.shotView.update(null);
+    this.slingshot.cancel();
     this.updateInfo();
   }
 
-  /** One snail per team on the first two spawn points. */
-  private spawnSnails(): void {
-    for (const v of this.snailViews) v.destroy();
-    const world: SnailWorld = { mask: this.layout.mask, waterLevel: this.layout.waterLevel };
-    this.snails = this.layout.spawns
-      .slice(0, 2)
-      .map((spawn, i) => ({ ...spawnSnail(i, i, spawn.x, world), facing: i === 0 ? 1 : -1 }));
-    this.snailViews = this.snails.map((s) => new SnailView(this, s));
-    this.active = 0;
-  }
-
-  private explode(crater: Crater): void {
-    playExplosion(this, crater, this.layout.mask, () => {
-      const result = addCrater(this.state, this.layout, crater);
-      this.state = result.state;
-      this.view?.onCrater(crater);
-      this.decor?.remove(result.removedDecor);
-      this.grass?.onCrater(crater);
-      this.snails = this.snails.map((s) => applyExplosion(s, crater));
-      this.updateInfo();
-    });
-  }
-
   private updateInfo(): void {
-    const { source, craters } = this.state;
+    const { source, craters } = this.match.terrain;
     const hash = checksum(this.layout.mask).toString(16).padStart(8, '0');
     const where = source.kind === 'hills' ? `hills ${source.seed}` : `map ${source.id}`;
     this.registry.set(
       DEBUG_INFO,
-      `${where} · craters ${craters.length} · mask ${hash} · maps loaded ${this.maps.size}\n` +
-        '←/→ A/D: crawl · W/space: jump · Tab: other snail · click: pea · shift+click: acorn · ' +
-        'R: new hills · M: next map',
+      `${where} · craters ${craters.length} · mask ${hash}\n` +
+        'A/D: crawl · W/space: jump · drag+release: shoot · 1/2: weapon · R: hills · M: map',
     );
   }
 }

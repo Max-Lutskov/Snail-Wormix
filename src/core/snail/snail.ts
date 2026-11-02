@@ -1,6 +1,6 @@
 /**
  * Snail movement on the terrain mask: crawling with small step-ups and step-downs, a forward
- * jump, gravity, wall bounces, knockback from explosions and drowning.
+ * jump, gravity, wall bounces, knockback from explosions, health and drowning.
  *
  * Fixed step: one call of stepSnail is one tick (1/60 s), velocities are in px per tick.
  * The snail is a box standing on its feet point (x, y): it covers columns
@@ -31,6 +31,7 @@ export const SNAIL = {
   /** Knockback: peak speed at the crater center, and reach beyond the crater radius. */
   knockback: 7,
   knockbackReach: 20,
+  maxHp: 100,
 } as const;
 
 export interface Snail {
@@ -43,6 +44,8 @@ export interface Snail {
   readonly facing: 1 | -1;
   readonly grounded: boolean;
   readonly alive: boolean;
+  /** 0 when dead. */
+  readonly hp: number;
 }
 
 export interface SnailInput {
@@ -93,14 +96,22 @@ export function spawnSnail(id: number, team: number, x: number, world: SnailWorl
     facing: 1,
     grounded,
     alive: true,
+    hp: SNAIL.maxHp,
   };
+}
+
+/** Takes `amount` hp off; the snail dies at 0. */
+export function damageSnail(snail: Snail, amount: number): Snail {
+  if (!snail.alive || amount <= 0) return snail;
+  const hp = Math.max(0, snail.hp - amount);
+  return { ...snail, hp, alive: hp > 0 };
 }
 
 /** Advances the snail by one tick. Dead snails don't change. */
 export function stepSnail(snail: Snail, input: SnailInput, world: SnailWorld): Snail {
   if (!snail.alive) return snail;
   const next = snail.grounded ? walk(snail, input, world.mask) : fly(snail, world.mask);
-  return next.y >= world.waterLevel ? { ...next, alive: false, vx: 0, vy: 0 } : next;
+  return next.y >= world.waterLevel ? { ...next, alive: false, hp: 0, vx: 0, vy: 0 } : next;
 }
 
 function walk(snail: Snail, input: SnailInput, mask: TerrainMask): Snail {
