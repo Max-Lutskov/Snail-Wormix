@@ -10,6 +10,7 @@ const W = Number(ws);
 const H = Number(hs);
 const px = readPng(input, W, H);
 const cut = readPng(cutPath, W, H);
+const GROW = Math.max(2, Math.round((2 * W) / 1024));
 
 // Level 0: colour premultiplied by known-ness (1 where background).
 let levels = [];
@@ -18,12 +19,13 @@ let h = H;
 let col = new Float32Array(W * H * 3);
 let wt = new Float32Array(W * H);
 for (let i = 0; i < W * H; i++) {
-  // Grow the hole by testing a 2 px neighbourhood: antialiased terrain edges are not background.
+  // Grow the hole by a few px (2 per 1024 px of width): antialiased terrain edges are not
+  // background.
   let known = 1;
   const x = i % W;
   const y = (i - x) / W;
-  for (let dy = -2; dy <= 2 && known; dy++)
-    for (let dx = -2; dx <= 2 && known; dx++) {
+  for (let dy = -GROW; dy <= GROW && known; dy++)
+    for (let dx = -GROW; dx <= GROW && known; dx++) {
       const xx = Math.min(W - 1, Math.max(0, x + dx));
       const yy = Math.min(H - 1, Math.max(0, y + dy));
       if (cut[(yy * W + xx) * 4 + 3] > 0) known = 0;

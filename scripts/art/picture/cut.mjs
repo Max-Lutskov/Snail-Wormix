@@ -49,7 +49,7 @@ while (stack.length) {
   if (i < N - W) stack.push(i + W);
 }
 
-// Solid = not background; drop small specks (noise in the backdrop).
+// Solid = not background; drop specks smaller than 1/2000 of the picture (backdrop noise).
 const solid = new Uint8Array(N);
 for (let i = 0; i < N; i++) solid[i] = bg[i] ? 0 : 1;
 const seen = new Uint8Array(N);
@@ -69,7 +69,7 @@ for (let s = 0; s < N; s++) {
       }
     }
   }
-  if (comp.length < 400) for (const i of comp) solid[i] = 0;
+  if (comp.length < N / 2000) for (const i of comp) solid[i] = 0;
 }
 
 const rgba = new Uint8Array(N * 4);
