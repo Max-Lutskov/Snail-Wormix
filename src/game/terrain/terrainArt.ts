@@ -1,21 +1,15 @@
 /**
  * Pixel art for the terrain, following docs/art/ART_SPEC.md ("Сад і город").
  *
- * Three buffers, all world-sized:
- * - base: the untouched look (soil tile, moss, decor), painted once from the pre-crater terrain;
+ * Buffers, all world-sized:
+ * - base: the untouched ground look (soil tile, moss), painted once from the pre-crater terrain;
  * - burn: 0..255 scorch intensity around craters, accumulated with max();
- * - the visible texture = base blended toward the burn color, a back wall where ground was
- *   blown out, transparent elsewhere.
+ * - the visible texture = base blended toward the burn color, with anti-aliased edges, and
+ *   transparent where there is no ground (holes show the sky and parallax behind).
+ *
+ * Decor (mushrooms, dew, grass) is not painted here: DecorView draws it as vector sprites.
  */
 
-import {
-  decorBounds,
-  decorCovers,
-  mushroomPartAt,
-  type Decor,
-  type DewDrop,
-  type Mushroom,
-} from '../../core/terrain/decor';
 import { mossBumpLift } from '../../core/terrain/hills';
 import type { TerrainLayout } from '../../core/terrain/layout';
 import type { PixelRect, TerrainMask } from '../../core/terrain/mask';
@@ -43,29 +37,10 @@ const FUZZ_RGB = hexToRgb(C.moss.fuzz);
 const WARM_RGB = hexToRgb(C.moss.warm);
 const COOL_RGB = hexToRgb(C.moss.cool);
 const BURN_RGB = hexToRgb(C.crater.burn);
-const OUTLINE_RGB = hexToRgb(C.snail.outline);
-const STEM_RGB = hexToRgb(C.mushroom.stem);
-const STEM_SHADE_RGB: Rgb = [STEM_RGB[0] * 0.8, STEM_RGB[1] * 0.78, STEM_RGB[2] * 0.75];
-const CAP_RGB = hexToRgb(C.mushroom.cap);
-const CAP_DOT_RGB = hexToRgb(C.mushroom.dots);
-const DEW_RGB = hexToRgb(C.dew.fill);
-const DEW_OUTLINE_RGB = hexToRgb(C.dew.outline);
-const DEW_SHINE_RGB = hexToRgb(C.dew.highlight);
-const GRASS_RGB = hexToRgb(C.grass);
 /** Depth (px below the surface) at which soil reaches its darkest shade. */
 const DARKEST_DEPTH = 420;
-/** White dots on the mushroom cap at scale 1, relative to the stem bottom (from mushroom.svg). */
-const CAP_DOTS = [
-  { x: -5, y: -18, r: 2 },
-  { x: 4, y: -20, r: 2.4 },
-] as const;
 /** Half-width of the window used to smooth the surface before measuring its slope. */
 const SLOPE_SMOOTH = 12;
-/**
- * Decor pixels are stored with this alpha in the base art (visually opaque): when blown out
- * they become sky, not back wall, because they stuck out of the ground.
- */
-const DECOR_ALPHA = 254;
 
 /** Cheap stable integer hash → [0, 1) (render-only). */
 function hash2(x: number, y: number): number {
@@ -74,11 +49,11 @@ function hash2(x: number, y: number): number {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
-function put(out: Rgba, o: number, rgb: Rgb, k = 1, alpha = 255): void {
+function put(out: Rgba, o: number, rgb: Rgb, k = 1): void {
   out[o] = rgb[0] * k;
   out[o + 1] = rgb[1] * k;
   out[o + 2] = rgb[2] * k;
-  out[o + 3] = alpha;
+  out[o + 3] = 255;
 }
 
 function mix(a: Rgb, b: Rgb, t: number): Rgb {
@@ -119,26 +94,18 @@ function soilTexel(tile: SoilTile, x: number, y: number): number {
   return (v * n + u) * 4;
 }
 
-/** Marks every pixel covered by decor. */
-function decorMap(layout: TerrainLayout): Uint8Array {
-  const { width, height } = layout.mask;
-  const map = new Uint8Array(width * height);
-  for (const d of layout.decor) {
-    const b = decorBounds(d);
-    for (let y = Math.max(0, b.top); y <= Math.min(height - 1, b.bottom); y++) {
-      for (let x = Math.max(0, b.left); x <= Math.min(width - 1, b.right); x++) {
-        if (decorCovers(d, x, y)) map[y * width + x] = 1;
-      }
-    }
-  }
-  return map;
+/** 1 for every mask pixel that belongs to decor rather than ground. */
+export function decorOwnership(layout: TerrainLayout): Uint8Array {
+  const owned = new Uint8Array(layout.mask.width * layout.mask.height);
+  for (const pixels of layout.decorPixels) for (const p of pixels) owned[p] = 1;
+  return owned;
 }
 
-/** Ground art for generated terrain: varied soil tile, moss along the surface, painted decor. */
+/** Ground art for generated terrain: varied soil tile with moss along the surface. */
 export function paintGardenArt(layout: TerrainLayout, tile: SoilTile): Rgba {
   const { width, height, data } = layout.mask;
   const out = new Uint8ClampedArray(width * height * 4);
-  const isDecor = decorMap(layout);
+  const owned = decorOwnership(layout);
   const { lift, owner } = mossBumpLift(width, layout.mossBumps);
 
   // First ground pixel per column, ignoring decor.
@@ -146,7 +113,7 @@ export function paintGardenArt(layout: TerrainLayout, tile: SoilTile): Rgba {
   for (let x = 0; x < width; x++) {
     for (let y = 0; y < height; y++) {
       const i = y * width + x;
-      if (data[i] === 1 && isDecor[i] === 0) {
+      if (data[i] === 1 && owned[i] === 0) {
         top[x] = y;
         break;
       }
@@ -181,7 +148,6 @@ export function paintGardenArt(layout: TerrainLayout, tile: SoilTile): Rgba {
 
     for (let y = colTop; y < height; y++) {
       const i = y * width + x;
-      // Ground is painted under decor too: decor parts that blend in (stem foot) show it.
       if (data[i] === 0) continue;
       const o = i * 4;
       const fromTop = y - colTop;
@@ -208,68 +174,7 @@ export function paintGardenArt(layout: TerrainLayout, tile: SoilTile): Rgba {
       }
     }
   }
-
-  for (const d of layout.decor) paintDecor(out, layout.mask, d);
   return out;
-}
-
-function paintDecor(out: Rgba, mask: TerrainMask, d: Decor): void {
-  const { width, height, data } = mask;
-  const b = decorBounds(d);
-  for (let y = Math.max(0, b.top); y <= Math.min(height - 1, b.bottom); y++) {
-    for (let x = Math.max(0, b.left); x <= Math.min(width - 1, b.right); x++) {
-      const i = y * width + x;
-      if (data[i] === 0 || !decorCovers(d, x, y)) continue;
-      const rgb = decorColor(d, x, y);
-      if (rgb) put(out, i * 4, rgb, 1, DECOR_ALPHA);
-      // A part meant to blend into the ground, but there is no ground art under it (a gap
-      // between moss bumps): fill with moss so it doesn't show as a black hole.
-      else if (out[i * 4 + 3] === 0) put(out, i * 4, MAIN.rgb, 1, DECOR_ALPHA);
-    }
-  }
-}
-
-/** Color of a decor pixel, or null to leave the ground art underneath (e.g. stem foot). */
-function decorColor(d: Decor, x: number, y: number): Rgb | null {
-  switch (d.kind) {
-    case 'mushroom':
-      return mushroomColor(d, x, y);
-    case 'dew':
-      return dewColor(d, x, y);
-    case 'grass':
-      return GRASS_RGB;
-  }
-}
-
-function mushroomColor(m: Mushroom, x: number, y: number): Rgb | null {
-  const dx = x - m.x;
-  const dy = y - m.y;
-  const part = mushroomPartAt(dx, dy, m.scale);
-  if (part === 'stem' && dy > -3 * m.scale) return null; // stem foot stays in the moss
-  // Thin outline where the mushroom meets air keeps it readable against the sky.
-  const edge =
-    mushroomPartAt(dx - 1, dy, m.scale) === null ||
-    mushroomPartAt(dx + 1, dy, m.scale) === null ||
-    mushroomPartAt(dx, dy - 1, m.scale) === null;
-  if (part === 'cap') {
-    // Outline only the cap: the stem is too thin (4–8 px) and would read as a dark stick.
-    if (edge) return OUTLINE_RGB;
-    const s = m.scale;
-    const dot = CAP_DOTS.some((c) => (dx - c.x * s) ** 2 + (dy - c.y * s) ** 2 <= (c.r * s) ** 2);
-    return dot ? CAP_DOT_RGB : CAP_RGB;
-  }
-  return edge ? STEM_SHADE_RGB : STEM_RGB;
-}
-
-function dewColor(d: DewDrop, x: number, y: number): Rgb {
-  const covered = (px: number, py: number): boolean => decorCovers(d, px, py);
-  if (!covered(x - 1, y) || !covered(x + 1, y) || !covered(x, y - 1) || !covered(x, y + 1)) {
-    return DEW_OUTLINE_RGB;
-  }
-  const sx = Math.floor(d.x - d.r * 0.35);
-  const sy = Math.floor(d.y - d.r * 0.35);
-  if ((x === sx || x === sx + 1) && y === sy) return DEW_SHINE_RGB;
-  return DEW_RGB;
 }
 
 /** Pixel rect a crater's scorch can touch (crater plus the burn ring), clipped to the world. */
@@ -303,47 +208,90 @@ export function addBurn(burn: Uint8Array, mask: TerrainMask, c: Crater): void {
   }
 }
 
-/**
- * Back wall behind blown-out ground (not in the art spec yet, tentative): mostly a flat cool
- * grey-brown with a faint trace of the soil texture, lighter than the burnt rim so the rim
- * stays the darkest line between solid ground and the hole.
- */
-const BACK_WALL_TEXTURE = 0.3;
-const BACK_WALL_RGB: Rgb = [46 * 0.7, 38 * 0.7, 36 * 0.7];
+/** Neighbour order when an edge pixel borrows a ground color: sides first, then corners. */
+const NEIGHBOURS = [
+  [0, -1],
+  [0, 1],
+  [-1, 0],
+  [1, 0],
+  [-1, -1],
+  [1, -1],
+  [-1, 1],
+  [1, 1],
+] as const;
 
 /**
- * Writes the visible terrain for `rect` into `target`. `base` is painted from the terrain
- * before any crater: alpha 255 marks where ground used to be, DECOR_ALPHA marks decor.
+ * Writes the visible terrain for `rect` into `target`.
+ *
+ * Ground = mask pixels not owned by decor. Edges are anti-aliased by coverage: alpha is the
+ * share of ground in the pixel's 3×3 neighbourhood (a straight edge gets ~2/3 inside and ~1/3
+ * on the outer air pixel), and air pixels borrow a neighbouring ground color. The mask itself
+ * stays binary; only the picture's edge is soft (as the terrain spec allows).
  */
 export function composeTerrain(
   target: Rgba,
   base: Rgba,
   burn: Uint8Array,
   mask: TerrainMask,
+  owned: Uint8Array,
   rect: PixelRect,
 ): void {
-  const { width } = mask;
-  for (let y = rect.y; y < rect.y + rect.height; y++) {
-    for (let x = rect.x; x < rect.x + rect.width; x++) {
+  const { width, height, data } = mask;
+  // Ground flags for the rect plus a 1 px border (0 outside the world), so the 3×3 sums below
+  // are plain index reads with no bounds checks.
+  const gw = rect.width + 2;
+  const gh = rect.height + 2;
+  const g = new Uint8Array(gw * gh);
+  for (let gy = 0; gy < gh; gy++) {
+    const y = rect.y + gy - 1;
+    if (y < 0 || y >= height) continue;
+    for (let gx = 0; gx < gw; gx++) {
+      const x = rect.x + gx - 1;
+      if (x < 0 || x >= width) continue;
+      const i = y * width + x;
+      g[gy * gw + gx] = data[i] === 1 && owned[i] === 0 ? 1 : 0;
+    }
+  }
+  const writeColor = (o: number, i: number): void => {
+    const k = (burn[i] ?? 0) / 255;
+    const bo = i * 4;
+    target[o] = (base[bo] ?? 0) + (BURN_RGB[0] - (base[bo] ?? 0)) * k;
+    target[o + 1] = (base[bo + 1] ?? 0) + (BURN_RGB[1] - (base[bo + 1] ?? 0)) * k;
+    target[o + 2] = (base[bo + 2] ?? 0) + (BURN_RGB[2] - (base[bo + 2] ?? 0)) * k;
+  };
+
+  for (let gy = 1; gy <= rect.height; gy++) {
+    const y = rect.y + gy - 1;
+    const up = (gy - 1) * gw;
+    const mid = gy * gw;
+    const down = (gy + 1) * gw;
+    for (let gx = 1; gx <= rect.width; gx++) {
+      const x = rect.x + gx - 1;
       const i = y * width + x;
       const o = i * 4;
-      if (mask.data[i] === 0) {
-        if (base[o + 3] === 255) {
-          // Blown-out ground shows a flat, muted back wall instead of the sky.
-          target[o] = (base[o] ?? 0) * BACK_WALL_TEXTURE + BACK_WALL_RGB[0];
-          target[o + 1] = (base[o + 1] ?? 0) * BACK_WALL_TEXTURE + BACK_WALL_RGB[1];
-          target[o + 2] = (base[o + 2] ?? 0) * BACK_WALL_TEXTURE + BACK_WALL_RGB[2];
-          target[o + 3] = 255;
-        } else {
-          target[o + 3] = 0;
-        }
+      const n =
+        (g[up + gx - 1] ?? 0) +
+        (g[up + gx] ?? 0) +
+        (g[up + gx + 1] ?? 0) +
+        (g[mid + gx - 1] ?? 0) +
+        (g[mid + gx] ?? 0) +
+        (g[mid + gx + 1] ?? 0) +
+        (g[down + gx - 1] ?? 0) +
+        (g[down + gx] ?? 0) +
+        (g[down + gx + 1] ?? 0);
+      if (n === 0) {
+        target[o + 3] = 0;
         continue;
       }
-      const k = (burn[i] ?? 0) / 255;
-      target[o] = (base[o] ?? 0) + (BURN_RGB[0] - (base[o] ?? 0)) * k;
-      target[o + 1] = (base[o + 1] ?? 0) + (BURN_RGB[1] - (base[o + 1] ?? 0)) * k;
-      target[o + 2] = (base[o + 2] ?? 0) + (BURN_RGB[2] - (base[o + 2] ?? 0)) * k;
-      target[o + 3] = 255;
+      if (g[mid + gx] === 1) {
+        writeColor(o, i);
+      } else {
+        // Air pixel on the edge: borrow the color of a neighbouring ground pixel.
+        const from = NEIGHBOURS.find(([dx, dy]) => g[(gy + dy) * gw + gx + dx] === 1);
+        if (!from) continue; // unreachable: n > 0 means a neighbour is ground
+        writeColor(o, (y + from[1]) * width + (x + from[0]));
+      }
+      target[o + 3] = Math.round((255 * n) / 9);
     }
   }
 }

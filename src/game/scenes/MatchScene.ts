@@ -11,15 +11,20 @@ import {
 } from '../../core/terrain/state';
 import { WORLD_HEIGHT, WORLD_WIDTH } from '../../core/world';
 import { tokens } from '../art/tokens';
+import { worldZoom } from '../display';
 import { createParallax, createSky } from '../env/sky';
 import { Water } from '../env/Water';
 import { playExplosion } from '../fx/explosion';
 import { ensureFxTextures } from '../fx/fxTextures';
+import { DecorView, MUSHROOM_SVG_SCALE, MUSHROOM_TEXTURE } from '../terrain/DecorView';
 import type { SoilTile } from '../terrain/terrainArt';
 import { TerrainView } from '../terrain/TerrainView';
+import { DEBUG_INFO } from './HudScene';
 
-const CAMERA_PAN_SPEED = 600; // px per second
+const CAMERA_PAN_SPEED = 600; // world px per second
 const SOIL_TILE_KEY = 'soil-tile';
+/** How far past the world edges the camera may look, so falls into the water are visible. */
+const CAMERA_MARGIN = 80;
 
 /**
  * Match scene. For now a terrain sandbox:
@@ -29,9 +34,10 @@ export class MatchScene extends Phaser.Scene {
   private state!: TerrainState;
   private layout!: TerrainLayout;
   private view: TerrainView | null = null;
+  private decor: DecorView | null = null;
   private water!: Water;
   private soilTile!: SoilTile;
-  private info!: Phaser.GameObjects.Text;
+  private layoutSky!: (camera: Phaser.Cameras.Scene2D.Camera) => void;
   private keys: { left: Phaser.Input.Keyboard.Key[]; right: Phaser.Input.Keyboard.Key[] } = {
     left: [],
     right: [],
@@ -44,25 +50,25 @@ export class MatchScene extends Phaser.Scene {
   preload(): void {
     const size = tokens.terrain.soilTileSize;
     this.load.svg(SOIL_TILE_KEY, 'art/soil-tile.svg', { width: size, height: size });
+    this.load.svg(MUSHROOM_TEXTURE, 'art/mushroom.svg', { scale: MUSHROOM_SVG_SCALE });
   }
 
   create(): void {
     this.soilTile = this.readSoilTile();
     ensureFxTextures(this);
 
-    const camera = this.cameras.main;
-    // Show a little past the world edges so falls into the water are visible.
-    camera.setBounds(-80, 0, WORLD_WIDTH + 160, WORLD_HEIGHT);
-    camera.centerOn(WORLD_WIDTH / 2, WORLD_HEIGHT / 2);
-
-    createSky(this);
+    this.layoutSky = createSky(this);
     createParallax(this, WORLD_WIDTH, WORLD_HEIGHT);
     this.water = new Water(this, WORLD_HEIGHT, -400, WORLD_WIDTH + 400, WORLD_HEIGHT + 200);
 
-    this.info = this.add
-      .text(12, 10, '', { fontFamily: 'monospace', fontSize: '15px', color: '#141c16' })
-      .setScrollFactor(0)
-      .setDepth(40);
+    const camera = this.cameras.main;
+    camera.setBounds(-CAMERA_MARGIN, 0, WORLD_WIDTH + 2 * CAMERA_MARGIN, WORLD_HEIGHT);
+    this.fitCamera();
+    camera.centerOn(WORLD_WIDTH / 2, WORLD_HEIGHT / 2);
+    this.scale.on(Phaser.Scale.Events.RESIZE, this.fitCamera);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.scale.off(Phaser.Scale.Events.RESIZE, this.fitCamera);
+    });
 
     this.loadTerrain(1);
 
@@ -93,6 +99,22 @@ export class MatchScene extends Phaser.Scene {
     this.water.update(time);
   }
 
+  /** Zooms the camera so the world's full height fills the (physical-pixel) viewport. */
+  private readonly fitCamera = (): void => {
+    const camera = this.cameras.main;
+    const { width, height } = this.scale;
+    // Keep looking at the same spot, unless the view was wider than the bounds (then the
+    // clamped position is meaningless): recenter on the world.
+    const center =
+      camera.worldView.width >= WORLD_WIDTH + 2 * CAMERA_MARGIN
+        ? new Phaser.Math.Vector2(WORLD_WIDTH / 2, WORLD_HEIGHT / 2)
+        : camera.midPoint.clone();
+    camera.setSize(width, height);
+    camera.setZoom(worldZoom(height));
+    camera.centerOn(center.x, center.y);
+    this.layoutSky(camera);
+  };
+
   private readSoilTile(): SoilTile {
     const size = tokens.terrain.soilTileSize;
     const source = this.textures.get(SOIL_TILE_KEY).getSourceImage() as CanvasImageSource;
@@ -107,6 +129,7 @@ export class MatchScene extends Phaser.Scene {
 
   private loadTerrain(seed: number): void {
     this.view?.destroy();
+    this.decor?.destroy();
     this.state = createTerrainState({ kind: 'hills', seed });
     this.layout = buildTerrain(this.state);
     this.view = new TerrainView(
@@ -117,14 +140,17 @@ export class MatchScene extends Phaser.Scene {
       this.soilTile,
     );
     this.view.gameObject.setDepth(0);
+    this.decor = new DecorView(this, this.layout);
     this.water.setLevel(this.layout.waterLevel);
     this.updateInfo();
   }
 
   private explode(crater: Crater): void {
     playExplosion(this, crater, this.layout.mask, () => {
-      this.state = addCrater(this.state, this.layout, crater).state;
+      const result = addCrater(this.state, this.layout, crater);
+      this.state = result.state;
       this.view?.onCrater(crater);
+      this.decor?.remove(result.removedDecor);
       this.updateInfo();
     });
   }
@@ -132,7 +158,8 @@ export class MatchScene extends Phaser.Scene {
   private updateInfo(): void {
     const { source, craters } = this.state;
     const hash = checksum(this.layout.mask).toString(16).padStart(8, '0');
-    this.info.setText(
+    this.registry.set(
+      DEBUG_INFO,
       `seed ${source.seed} · craters ${craters.length} · mask ${hash}\n` +
         'click: pea · shift+click: acorn · ←/→ A/D: pan · R: new map',
     );

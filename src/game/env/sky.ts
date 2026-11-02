@@ -5,8 +5,11 @@ const C = tokens.colors.sky;
 const SKY_KEY = 'env-sky';
 const SUN_KEY = 'env-sun';
 
-/** Screen-fixed vertical gradient sky with a soft sun spot; follows viewport resizes. */
-export function createSky(scene: Phaser.Scene): void {
+/**
+ * Screen-fixed vertical gradient sky with a soft sun spot. Returns a layout function the scene
+ * calls whenever the camera's size or zoom changes.
+ */
+export function createSky(scene: Phaser.Scene): (camera: Phaser.Cameras.Scene2D.Camera) => void {
   if (!scene.textures.exists(SKY_KEY)) {
     const sky = scene.textures.createCanvas(SKY_KEY, 4, 256);
     if (sky) {
@@ -34,17 +37,17 @@ export function createSky(scene: Phaser.Scene): void {
   const skyImage = scene.add.image(0, 0, SKY_KEY).setOrigin(0, 0).setScrollFactor(0).setDepth(-100);
   const sunImage = scene.add.image(0, 0, SUN_KEY).setScrollFactor(0.05).setDepth(-99);
 
-  const layout = (width: number, height: number): void => {
-    skyImage.setDisplaySize(width, height);
-    sunImage.setPosition(width * 0.78, height * 0.16);
+  return (camera) => {
+    // Screen-fixed objects are still zoomed around the camera center: size them so that,
+    // after zoom, they cover exactly the viewport.
+    const { width, height, zoom } = camera;
+    const w = width / zoom;
+    const h = height / zoom;
+    const left = (width - w) / 2;
+    const top = (height - h) / 2;
+    skyImage.setPosition(left, top).setDisplaySize(w, h);
+    sunImage.setPosition(left + w * 0.78, top + h * 0.16);
   };
-  layout(scene.scale.width, scene.scale.height);
-  scene.scale.on(Phaser.Scale.Events.RESIZE, (size: Phaser.Structs.Size) => {
-    layout(size.width, size.height);
-  });
-  scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-    scene.scale.off(Phaser.Scale.Events.RESIZE);
-  });
 }
 
 /** Tiny deterministic LCG for decoration placement (render-only, stable between reloads). */

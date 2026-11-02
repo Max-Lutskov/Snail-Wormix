@@ -6,6 +6,7 @@ import {
   addBurn,
   burnBounds,
   composeTerrain,
+  decorOwnership,
   paintGardenArt,
   type Rgba,
   type SoilTile,
@@ -20,6 +21,7 @@ export class TerrainView {
   private readonly pixels: ImageData;
   private readonly base: Rgba;
   private readonly burn: Uint8Array;
+  private readonly owned: Uint8Array;
 
   /**
    * @param base the terrain before any crater (base art, moss and the back wall come from it)
@@ -39,6 +41,7 @@ export class TerrainView {
     this.texture = texture;
 
     this.base = paintGardenArt(base, tile);
+    this.owned = decorOwnership(layout);
     this.burn = new Uint8Array(width * height);
     for (const c of craters) addBurn(this.burn, layout.mask, c);
 
@@ -60,7 +63,7 @@ export class TerrainView {
 
   private redraw(rect: PixelRect): void {
     if (rect.width <= 0 || rect.height <= 0) return;
-    composeTerrain(this.pixels.data, this.base, this.burn, this.layout.mask, rect);
+    composeTerrain(this.pixels.data, this.base, this.burn, this.layout.mask, this.owned, rect);
     this.texture.putData(this.pixels, 0, 0, rect.x, rect.y, rect.width, rect.height);
     this.texture.refresh();
   }
