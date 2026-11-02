@@ -33,6 +33,11 @@ const HIDE_HELMET_DROP = 6;
 /** Durations of the one-off poses, ms. */
 const SHOT_MS = 500;
 const HIT_MS = 1600;
+/**
+ * How fast the face eases into a new pose (time constants, ms): eyestalks and the rest move
+ * over ~0.1-0.15 s instead of snapping; eyelids are quick so blinks stay blinks.
+ */
+const EASE = { stalks: 110, eyes: 90, lids: 30, extras: 120, hide: 120, helmet: 100 } as const;
 const BODY = hexToInt(C.snail.body);
 const OUTLINE = hexToInt(C.snail.outline);
 const ACCENT = hexToInt(C.hud.accent);
@@ -122,9 +127,9 @@ function drawHideEyes(scene: Phaser.Scene): Phaser.GameObjects.Graphics {
   return g;
 }
 
-function drop(g: Phaser.GameObjects.Graphics, x: number, y: number, s = 1): void {
-  g.fillStyle(hexToInt(C.dew.fill), 1);
-  g.lineStyle(1.2, hexToInt(C.dew.outline), 1);
+function drop(g: Phaser.GameObjects.Graphics, x: number, y: number, s = 1, alpha = 1): void {
+  g.fillStyle(hexToInt(C.dew.fill), alpha);
+  g.lineStyle(1.2, hexToInt(C.dew.outline), alpha);
   g.beginPath();
   g.moveTo(x, y - 5 * s);
   g.lineTo(x - 2.4 * s, y - 0.5 * s);
@@ -135,8 +140,8 @@ function drop(g: Phaser.GameObjects.Graphics, x: number, y: number, s = 1): void
 }
 
 /** Shiver marks on both sides (snail space). */
-function shivers(g: Phaser.GameObjects.Graphics): void {
-  g.lineStyle(1.8, OUTLINE, 1);
+function shivers(g: Phaser.GameObjects.Graphics, alpha: number): void {
+  g.lineStyle(1.8, OUTLINE, alpha);
   for (const [cx, cy, dir] of [
     [-24, -30, -1],
     [-27, -21, -1],
@@ -203,6 +208,26 @@ export class SnailView {
   private won = false;
   /** Offsets the blinking so two snails don't blink together. */
   private readonly blinkPhase: number;
+  private lastTime = -1;
+  /**
+   * The face as shown, easing toward the target pose every frame: eyestalk angles and
+   * length, pupils, eyelids, the weights (0..1) of brows, tear and sweat, how far it is
+   * hidden, the helmet's tilt and the cannon's angle.
+   */
+  private readonly cur = {
+    stalks: [-12, 17],
+    len: 1,
+    pupil: 1,
+    lookX: 1.4,
+    lookY: 0,
+    lids: [0, 0],
+    brows: 0,
+    tear: 0,
+    sweat: 0,
+    hide: 0,
+    helmet: 0,
+    cannon: Phaser.Math.DegToRad(CANNON_REST_DEG),
+  };
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -270,6 +295,11 @@ export class SnailView {
 
   /** Moves the view to the snail's state; `time` in ms drives idle motion. */
   update(snail: Snail, mask: TerrainMask, time: number, view: SnailViewState): void {
+    const dt = this.lastTime < 0 ? 1000 : Math.min(100, time - this.lastTime);
+    this.lastTime = time;
+    /** Eases `from` toward `to` with time constant `tau` ms. */
+    const ease = (from: number, to: number, tau: number): number =>
+      from + (to - from) * (1 - Math.exp(-dt / tau));
     const facing = view.aim === null ? snail.facing : Math.cos(view.aim) >= 0 ? 1 : -1;
     this.root.setPosition(snail.x, snail.y);
     this.root.setScale(facing, 1);
@@ -301,8 +331,8 @@ export class SnailView {
     if (win && !this.won) this.confetti(snail);
     this.won = win;
 
-    // The cannon follows the aim (the root is flipped, then tilted, so undo both); a hit bends
-    // it down.
+    // The cannon follows the aim (the root is flipped, then tilted, so undo both) closely, and
+    // eases back to rest or down when a hit bends it.
     const local =
       view.aim !== null
         ? facing === 1
@@ -311,7 +341,9 @@ export class SnailView {
         : hit
           ? Phaser.Math.DegToRad(25)
           : Phaser.Math.DegToRad(CANNON_REST_DEG);
-    this.cannon.setRotation(local);
+    const c = this.cur;
+    c.cannon = ease(c.cannon, local, view.aim !== null ? 25 : EASE.helmet);
+    this.cannon.setRotation(c.cannon);
     this.cannon.setScale((hit ? 0.85 : 1) / SVG_SCALE, 1 / SVG_SCALE);
 
     // Body offsets: shiver while hiding or panicking, recoil on a shot.
@@ -319,21 +351,38 @@ export class SnailView {
     const recoil = shot ? -5 * ((this.shotUntil - time) / SHOT_MS) : 0;
     this.art.x = -ART_CENTER_X * ART_TO_WORLD + shiver + recoil;
 
-    // Helmet: pulled down while hiding, knocked askew by a hit (about its pivot).
-    this.helmet.y = hid ? HIDE_HELMET_DROP : 0;
-    this.helmet.x = 0;
-    this.helmet.setRotation(0);
-    if (hit && !hid) {
-      const r = -0.45;
-      const { x: px, y: py } = T.helmetPivot;
-      this.helmet.setRotation(r);
-      this.helmet.x = px - (px * Math.cos(r) - py * Math.sin(r));
-      this.helmet.y = py - (px * Math.sin(r) + py * Math.cos(r));
-    }
-    this.hideEyes.setVisible(hid);
+    // Helmet: pulled down while hiding, knocked askew by a hit (about its pivot), both eased.
+    c.hide = ease(c.hide, hid ? 1 : 0, EASE.hide);
+    c.helmet = ease(c.helmet, hit && !hid ? -0.45 : 0, EASE.helmet);
+    const r = c.helmet;
+    const { x: px, y: py } = T.helmetPivot;
+    this.helmet.setRotation(r);
+    this.helmet.x = px - (px * Math.cos(r) - py * Math.sin(r));
+    this.helmet.y = py - (px * Math.sin(r) + py * Math.cos(r)) + HIDE_HELMET_DROP * c.hide;
+    this.hideEyes.setVisible(c.hide > 0.02).setAlpha(c.hide);
 
-    const pose = this.pose(view, time, walking, snail.grounded, hit, shot);
-    this.drawFace(pose, time, { hid, hit, win });
+    // The face eases toward the target pose; while hiding, the eyestalks pull in.
+    const target = this.pose(view, time, walking, snail.grounded, hit, shot);
+    for (const i of [0, 1] as const) {
+      c.stalks[i] = ease(c.stalks[i] ?? 0, target.stalks[i], EASE.stalks);
+      c.lids[i] = ease(c.lids[i] ?? 0, target.lids[i], EASE.lids);
+    }
+    c.len = ease(c.len, hid ? 0.15 : target.len, EASE.stalks);
+    c.pupil = ease(c.pupil, target.pupil, EASE.eyes);
+    c.lookX = ease(c.lookX, target.look.x, EASE.eyes);
+    c.lookY = ease(c.lookY, target.look.y, EASE.eyes);
+    c.brows = ease(c.brows, target.brows ? 1 : 0, EASE.extras);
+    c.tear = ease(c.tear, target.tear ? 1 : 0, EASE.extras);
+    c.sweat = ease(c.sweat, target.sweat ? 1 : 0, EASE.extras);
+    const shown: Pose = {
+      ...target,
+      stalks: [c.stalks[0] ?? 0, c.stalks[1] ?? 0],
+      len: c.len,
+      pupil: c.pupil,
+      look: { x: c.lookX, y: c.lookY },
+      lids: [c.lids[0] ?? 0, c.lids[1] ?? 0],
+    };
+    this.drawFace(shown, time, { hide: c.hide, hit, win });
   }
 
   /** The face for this frame: the mood's pose, with the one-off poses on top. */
@@ -389,24 +438,25 @@ export class SnailView {
   private drawFace(
     pose: Pose,
     time: number,
-    flags: { hid: boolean; hit: boolean; win: boolean },
+    flags: { hide: number; hit: boolean; win: boolean },
   ): void {
     const g = this.face.clear();
-    if (flags.hid) {
-      drop(g, 41, -33);
-      shivers(g);
-      g.setAlpha(0.6 + 0.4 * Math.abs(Math.sin(time / 120)));
-    } else {
-      g.setAlpha(1);
+    const c = this.cur;
+    if (flags.hide > 0.02) {
+      const pulse = flags.hide * (0.6 + 0.4 * Math.abs(Math.sin(time / 120)));
+      drop(g, 41, -33, 1, pulse);
+      shivers(g, pulse);
     }
+    // While hiding, the eyestalks fade as they pull in.
+    const shown = 1 - flags.hide;
 
     T.eyestalkMounts.forEach((m, i) => {
       const stalk = this.stalks[i];
       const pupil = this.pupils[i];
       if (!stalk || !pupil) return;
-      stalk.setVisible(!flags.hid);
-      pupil.setVisible(!flags.hid && pose.eyes === 'normal');
-      if (flags.hid) return;
+      stalk.setVisible(shown > 0.05).setAlpha(shown);
+      pupil.setVisible(shown > 0.05 && pose.eyes === 'normal').setAlpha(shown);
+      if (shown <= 0.05) return;
       const angle = pose.stalks[i] ?? 0;
       stalk.setAngle(angle).setScale(1 / SVG_SCALE, pose.len / SVG_SCALE);
       const a = Phaser.Math.DegToRad(angle);
@@ -431,18 +481,18 @@ export class SnailView {
         g.strokePath();
       }
       lid(g, cx, cy, pose.lids[i] ?? 0);
-      if (pose.brows) {
+      if (c.brows > 0.02) {
         // Angry: brows slanting down toward each other.
         const inner = i === 0 ? 1 : -1;
-        g.lineStyle(2.2, OUTLINE, 1);
+        g.lineStyle(2.2, OUTLINE, c.brows * shown);
         g.lineBetween(cx - 4 * inner, cy - 8.5, cx + 3.5 * inner, cy - 5.5);
       }
-      if (pose.tear && i === 1) drop(g, cx + 1, cy + 8, 0.8);
+      if (c.tear > 0.02 && i === 1) drop(g, cx + 1, cy + 8, 0.8, c.tear * shown);
     });
 
-    if (pose.sweat) {
-      drop(g, 40, -31, 0.9);
-      drop(g, 44, -22, 0.7);
+    if (c.sweat > 0.02) {
+      drop(g, 40, -31, 0.9, c.sweat);
+      drop(g, 44, -22, 0.7, c.sweat);
     }
     this.mouth(g, pose.mouth);
 
