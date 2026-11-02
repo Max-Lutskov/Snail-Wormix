@@ -190,53 +190,49 @@ function vine(d, leaves) {
   );
 }
 
-// --- Shaggy grass ------------------------------------------------------------------------------
-// The grass is a pile of long curved leaves in three tiers (back: darker, standing up behind the
-// edge; middle: combed sideways in waves; front: lightest, drooping over the edge). Each leaf is
-// shaded like a rounded object (dark body, lighter inner body toward the light, a highlight line),
-// which is what makes the pile look thick and 3D.
+// --- Grass mane ---------------------------------------------------------------------------------
+// The grass is a few big, smooth locks (like a mane), not many small leaves: wide curved tongues
+// with a soft vertical gradient (light top, dark bottom) and a thin outline only around each
+// lock. A smooth mass under them ties the locks together; front locks droop over the edge and a
+// soft shadow falls on the rock below. Volume comes from the gradients, not from detail lines.
 
-const GRASS_TONES = [
-  { body: '#2F6B22', inner: '#3F8A2C', glint: '#5DAA3A' }, // back
-  { body: '#3F8A2C', inner: '#5DAA3A', glint: '#9BD84A' }, // middle
-  { body: '#4E9A33', inner: '#7DCB4C', glint: '#C4EE84' }, // front
-];
-const LEAF_OUT = '#1E4A17';
+const LOCK_OUT = '#1E4A17';
+const grassDefs =
+  `<linearGradient id="gBack" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6FB43E"/><stop offset="1" stop-color="#235A1C"/></linearGradient>` +
+  `<linearGradient id="gMid" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#B4E567"/><stop offset=".5" stop-color="#6CBB3F"/><stop offset="1" stop-color="#2F7424"/></linearGradient>` +
+  `<linearGradient id="gFront" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9AD655"/><stop offset=".55" stop-color="#4E9A33"/><stop offset="1" stop-color="#265F1D"/></linearGradient>` +
+  `<linearGradient id="gMass" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8ED15A"/><stop offset=".4" stop-color="#4E9A33"/><stop offset="1" stop-color="#22561A"/></linearGradient>` +
+  `<linearGradient id="gShade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity=".38"/><stop offset="1" stop-color="#000" stop-opacity="0"/></linearGradient>`;
 
 /**
- * One tapered leaf from root (x, y) in direction `angle` (radians, screen coords; 0 = right,
- * -PI/2 = up), `len` long, `w` wide at the root, its tip bent sideways by `curl`.
+ * One lock: a fat crescent from a root (x, y) toward `angle` (radians, screen coords), `len`
+ * long, `w` wide at its widest, its tip swept sideways by `curl`. Smooth cubic sides.
  */
-function leaf(x, y, angle, len, w, curl, tone) {
+function lockPath(x, y, angle, len, w, curl) {
   const dx = Math.cos(angle);
   const dy = Math.sin(angle);
   const px = -dy;
   const py = dx;
-  const shape = (width, shift) => {
-    const ox = px * shift;
-    const oy = py * shift;
-    const tipX = x + dx * len + px * curl + ox * 0.3;
-    const tipY = y + dy * len + py * curl + oy * 0.3;
-    const cx = x + dx * len * 0.55 + px * curl * 0.45;
-    const cy = y + dy * len * 0.55 + py * curl * 0.45;
-    return (
-      `M${f(x - px * width * 0.5 + ox)},${f(y - py * width * 0.5 + oy)}` +
-      ` Q${f(cx - px * width * 0.45 + ox)},${f(cy - py * width * 0.45 + oy)} ${f(tipX)},${f(tipY)}` +
-      ` Q${f(cx + px * width * 0.45 + ox)},${f(cy + py * width * 0.45 + oy)} ${f(x + px * width * 0.5 + ox)},${f(y + py * width * 0.5 + oy)} Z`
-    );
-  };
-  // Light comes from above: shift the lit inner body to the leaf's upper side.
-  const up = py < 0 ? -1 : 1;
-  const ribTipX = x + dx * len * 0.8 + px * curl * 0.75;
-  const ribTipY = y + dy * len * 0.8 + py * curl * 0.75;
-  const ribC = [
-    x + dx * len * 0.4 + px * (curl * 0.3 + up * w * 0.15),
-    y + dy * len * 0.4 + py * (curl * 0.3 + up * w * 0.15),
-  ];
+  const P = (along, side) => [x + dx * along + px * side, y + dy * along + py * side];
+  const bend = (t) => curl * t * t; // the lock curves more toward its tip
+  const tip = P(len, bend(1));
+  const a1 = P(len * 0.3, -w * 0.62 + bend(0.3));
+  const a2 = P(len * 0.72, -w * 0.38 + bend(0.72));
+  const b2 = P(len * 0.72, w * 0.3 + bend(0.72));
+  const b1 = P(len * 0.3, w * 0.55 + bend(0.3));
+  const rootA = P(0, -w * 0.45);
+  const rootB = P(0, w * 0.45);
+  const pt = (q) => `${f(q[0])},${f(q[1])}`;
+  return `M${pt(rootA)} C${pt(a1)} ${pt(a2)} ${pt(tip)} C${pt(b2)} ${pt(b1)} ${pt(rootB)} Z`;
+}
+
+function lock(x, y, angle, len, w, curl, grad) {
+  const d = lockPath(x, y, angle, len, w, curl);
+  // A soft lit sheen along the lock's upper half.
+  const sheen = lockPath(x, y - 2, angle, len * 0.82, w * 0.38, curl * 0.85);
   return (
-    `<path d="${shape(w, 0)}" fill="${tone.body}" stroke="${LEAF_OUT}" stroke-width="1.6" stroke-linejoin="round"/>` +
-    `<path d="${shape(w * 0.55, up * w * 0.18)}" fill="${tone.inner}"/>` +
-    `<path d="M${f(x + px * up * w * 0.12)},${f(y + py * up * w * 0.12)} Q${f(ribC[0])},${f(ribC[1])} ${f(ribTipX)},${f(ribTipY)}" stroke="${tone.glint}" stroke-width="${f(Math.max(1.2, w * 0.14))}" fill="none" stroke-linecap="round"/>`
+    `<path d="${d}" fill="url(#${grad})" stroke="${LOCK_OUT}" stroke-width="2.2" stroke-linejoin="round"/>` +
+    `<path d="${sheen}" fill="#E4FAB0" opacity=".28"/>`
   );
 }
 
@@ -245,11 +241,11 @@ function edgeY(edge, x) {
   return edge.reduce((a, p) => (Math.abs(p[0] - x) < Math.abs(a[0] - x) ? p : a))[1];
 }
 
-/** Combing direction along the edge: +1 sweeps right, -1 left; flips in waves ~110-190 px. */
+/** Combing direction along the edge: +1 sweeps right, -1 left; flips in waves ~160-260 px. */
 function combing(x0, x1) {
   const flips = [];
   let dir = rnd() < 0.5 ? -1 : 1;
-  for (let x = x0; x < x1 + 200; x += r(110, 190)) {
+  for (let x = x0; x < x1 + 300; x += r(160, 260)) {
     flips.push([x, dir]);
     dir = -dir;
   }
@@ -257,75 +253,100 @@ function combing(x0, x1) {
 }
 
 /**
- * The shaggy grass on one ledge: `back` leaves go behind the terrain (back.svg), the rest is
- * solid (terrain.svg) so snails stand on top of the pile, and `fluff` adds a few loose leaves in
- * front (grass.svg, erased by craters).
+ * The grass on one ledge: `back` locks go behind the terrain (back.svg), the mass and the
+ * middle and front locks are solid (terrain.svg) so snails stand on the grass, and `fluff` adds
+ * a few loose locks in front (grass.svg, erased by craters).
  */
 function shaggy(l, edge) {
   const sweep = combing(l.x0, l.x1);
   const back = [];
   const solid = [];
   const fluff = [];
-  // A dark body under the pile so no gaps show between leaves.
-  const body = edge.map(([x, y]) => [x, y + 6]);
-  solid.push(
-    `<path d="M${f(body[0][0] - 6)},${f(body[0][1] + 30)} ${body.map(([x, y]) => `L${f(x)},${f(y)}`).join(' ')} L${f(l.x1 + 6)},${f(edgeY(edge, l.x1) + 30)} Z" fill="${GRASS_TONES[0].body}" stroke="${LEAF_OUT}" stroke-width="3" stroke-linejoin="round"/>`,
-  );
   const span = (step, fn) => {
-    for (let x = l.x0 + r(0, step); x <= l.x1; x += step * r(0.7, 1.3)) fn(x, edgeY(edge, x));
+    for (let x = l.x0 + r(0, step * 0.5); x <= l.x1; x += step * r(0.75, 1.25))
+      fn(x, edgeY(edge, x));
   };
-  // Back tier: standing up and leaning with the combing, behind everything.
-  span(15, (x, y) => {
+
+  // Soft shadow on the rock under the grass.
+  solid.push(
+    `<path d="M${f(l.x0)},${f(edgeY(edge, l.x0) + 14)} ${edge.map(([x, y]) => `L${f(x)},${f(y + 14)}`).join(' ')} L${f(l.x1)},${f(edgeY(edge, l.x1) + 52)} ${edge
+      .slice()
+      .reverse()
+      .map(([x, y]) => `L${f(x)},${f(y + 52)}`)
+      .join(' ')} Z" fill="url(#gShade)"/>`,
+  );
+
+  // Back locks: standing up behind the edge, leaning with the combing.
+  span(22, (x, y) => {
     const d = sweep(x);
-    const a = -Math.PI / 2 + d * r(0.25, 0.75);
-    back.push(leaf(x, y + 10, a, r(36, 56), r(18, 26), d * r(6, 14), GRASS_TONES[0]));
+    back.push(
+      lock(x, y + 14, -Math.PI / 2 + d * r(0.5, 0.9), r(54, 84), r(16, 22), d * r(14, 26), 'gBack'),
+    );
   });
-  // Middle tier: combed sideways, the bulk of the pile.
-  span(13, (x, y) => {
+
+  // The mass: a smooth band along the edge with a gently scalloped underside.
+  const top = edge.map(([x, y]) => [x, y - 4]);
+  let mass = `M${f(l.x0 - 8)},${f(edgeY(edge, l.x0) + 10)} ${top.map(([x, y]) => `L${f(x)},${f(y)}`).join(' ')} L${f(l.x1 + 8)},${f(edgeY(edge, l.x1) + 10)}`;
+  for (let x = l.x1 + 8; x > l.x0 - 8;) {
+    const w = r(40, 70);
+    const xb = Math.max(l.x0 - 8, x - w);
+    const yb = edgeY(edge, (x + xb) / 2) + r(22, 30);
+    mass += ` Q${f((x + xb) / 2)},${f(yb + r(8, 16))} ${f(xb)},${f(edgeY(edge, xb) + 22)}`;
+    x = xb;
+  }
+  solid.push(
+    `<path d="${mass} Z" fill="url(#gMass)" stroke="${LOCK_OUT}" stroke-width="2.2" stroke-linejoin="round"/>`,
+  );
+
+  // Middle locks: combed sideways along the top, the main shaggy silhouette.
+  span(14, (x, y) => {
     const d = sweep(x);
-    const a = d > 0 ? -r(0.35, 0.8) : Math.PI + r(0.35, 0.8);
-    solid.push(leaf(x, y + 14, a, r(48, 76), r(22, 32), d * r(8, 16), GRASS_TONES[1]));
+    const a = d > 0 ? -r(0.12, 0.42) : Math.PI + r(0.12, 0.42);
+    solid.push(lock(x, y + 8, a, r(70, 112), r(18, 26), -d * r(10, 22), 'gMid'));
   });
-  // Front tier: lightest, drooping over the edge onto the slabs.
-  span(16, (x, y) => {
+
+  // Front locks: drooping over the edge onto the rock.
+  span(20, (x, y) => {
     const d = sweep(x);
-    const a = Math.PI / 2 - d * r(0.7, 1.15);
-    solid.push(leaf(x, y + 18, a, r(34, 56), r(20, 28), -d * r(6, 12), GRASS_TONES[2]));
+    const a = Math.PI / 2 - d * r(0.55, 0.95);
+    solid.push(lock(x, y + 14, a, r(46, 76), r(16, 22), d * r(10, 18), 'gFront'));
   });
-  // Long strands draping down at both ends of the ledge.
+
+  // Big drapes at both ends of the ledge.
   for (const [ex, side] of [
-    [l.x0 + 4, -1],
-    [l.x1 - 4, 1],
+    [l.x0 + 6, -1],
+    [l.x1 - 6, 1],
   ]) {
     const ey = edgeY(edge, ex);
-    for (let k = 0; k < 4; k++) {
-      const a = Math.PI / 2 + side * r(0.15, 0.6);
-      solid.push(
-        leaf(
-          ex + side * r(0, 8),
-          ey + 10 + k * 8,
-          a,
-          r(50, 80),
-          r(18, 24),
-          side * r(-6, 8),
-          GRASS_TONES[k % 2 ? 1 : 2],
-        ),
-      );
-    }
+    solid.push(
+      lock(
+        ex,
+        ey + 6,
+        Math.PI / 2 + side * r(0.35, 0.55),
+        r(60, 84),
+        r(30, 38),
+        -side * r(10, 20),
+        'gFront',
+      ),
+    );
+    solid.push(
+      lock(
+        ex - side * 14,
+        ey + 10,
+        Math.PI / 2 + side * r(0.1, 0.3),
+        r(44, 60),
+        r(24, 30),
+        -side * r(6, 14),
+        'gMid',
+      ),
+    );
   }
-  // Loose fluff on top.
-  span(34, (x, y) => {
+
+  // A few loose locks on top, in front.
+  span(130, (x, y) => {
     const d = sweep(x);
     fluff.push(
-      leaf(
-        x,
-        y + 2,
-        -Math.PI / 2 + d * r(0.2, 0.6),
-        r(16, 26),
-        r(7, 10),
-        d * r(3, 8),
-        GRASS_TONES[2],
-      ),
+      lock(x, y + 2, -Math.PI / 2 + d * r(0.6, 1.0), r(30, 44), r(18, 24), d * r(8, 14), 'gMid'),
     );
   });
   return { back: back.join(''), solid: solid.join(''), fluff: fluff.join('') };
@@ -358,14 +379,16 @@ const header = (what) =>
 
 const terrain =
   header('solid layer: opaque = solid') +
-  `  <defs>${slabDefs}${clips.join('')}</defs>\n  ${solid.join('\n  ')}\n</svg>\n`;
+  `  <defs>${slabDefs}${grassDefs}${clips.join('')}</defs>\n  ${solid.join('\n  ')}\n</svg>\n`;
 
 const grass =
-  header('non-solid front layer: loose grass leaves, erased by craters') +
-  `  ${front.join('\n  ')}\n</svg>\n`;
+  header('non-solid front layer: loose grass locks, erased by craters') +
+  `  <defs>${grassDefs}</defs>
+  ${front.join('\n  ')}\n</svg>\n`;
 
 const back =
-  header('non-solid back layer: root vines and the back tier of the grass') +
+  header('non-solid back layer: root vines and the back grass locks') +
+  `<defs>${grassDefs}</defs>` +
   behind.join('') +
   vine('M790,426 C770,470 830,480 812,530', [
     [786, 470, 150],
