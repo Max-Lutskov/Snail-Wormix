@@ -1,7 +1,15 @@
 import type Phaser from 'phaser';
 import type { TerrainLayout } from '../../core/terrain/layout';
-import { cloneMask, type PixelRect, type TerrainMask } from '../../core/terrain/mask';
-import { composeTerrain, paintHillsArt, type Rgba } from './terrainArt';
+import type { PixelRect } from '../../core/terrain/mask';
+import type { Crater } from '../../core/terrain/state';
+import {
+  addBurn,
+  burnBounds,
+  composeTerrain,
+  paintGardenArt,
+  type Rgba,
+  type SoilTile,
+} from './terrainArt';
 
 const TEXTURE_KEY = 'terrain';
 
@@ -11,11 +19,18 @@ export class TerrainView {
   private readonly image: Phaser.GameObjects.Image;
   private readonly pixels: ImageData;
   private readonly base: Rgba;
-  private readonly original: TerrainMask;
+  private readonly burn: Uint8Array;
 
+  /**
+   * @param base the terrain before any crater (base art, moss and the back wall come from it)
+   * @param layout the live terrain, already carved with `craters`
+   */
   constructor(
     private readonly scene: Phaser.Scene,
+    base: TerrainLayout,
     private readonly layout: TerrainLayout,
+    craters: readonly Crater[],
+    tile: SoilTile,
   ) {
     const { width, height } = layout.mask;
     if (scene.textures.exists(TEXTURE_KEY)) scene.textures.remove(TEXTURE_KEY);
@@ -23,28 +38,30 @@ export class TerrainView {
     if (!texture) throw new Error('TerrainView: could not create canvas texture');
     this.texture = texture;
 
-    this.original = cloneMask(layout.mask);
-    this.base = paintHillsArt(this.original);
+    this.base = paintGardenArt(base, tile);
+    this.burn = new Uint8Array(width * height);
+    for (const c of craters) addBurn(this.burn, layout.mask, c);
+
     this.pixels = texture.context.createImageData(width, height);
     this.redraw({ x: 0, y: 0, width, height });
 
     this.image = scene.add.image(0, 0, TEXTURE_KEY).setOrigin(0, 0);
   }
 
-  /** Re-composes the given area (grown by the burnt-rim width) and uploads the texture. */
-  redraw(rect: PixelRect): void {
-    const { width, height } = this.layout.mask;
-    const pad = 4;
-    const x = Math.max(0, rect.x - pad);
-    const y = Math.max(0, rect.y - pad);
-    const area = {
-      x,
-      y,
-      width: Math.min(width, rect.x + rect.width + pad) - x,
-      height: Math.min(height, rect.y + rect.height + pad) - y,
-    };
-    composeTerrain(this.pixels.data, this.base, this.original, this.layout.mask, area);
-    this.texture.putData(this.pixels, 0, 0, area.x, area.y, area.width, area.height);
+  get gameObject(): Phaser.GameObjects.Image {
+    return this.image;
+  }
+
+  /** Call after the crater has been carved into the mask. */
+  onCrater(crater: Crater): void {
+    addBurn(this.burn, this.layout.mask, crater);
+    this.redraw(burnBounds(this.layout.mask, crater));
+  }
+
+  private redraw(rect: PixelRect): void {
+    if (rect.width <= 0 || rect.height <= 0) return;
+    composeTerrain(this.pixels.data, this.base, this.burn, this.layout.mask, rect);
+    this.texture.putData(this.pixels, 0, 0, rect.x, rect.y, rect.width, rect.height);
     this.texture.refresh();
   }
 

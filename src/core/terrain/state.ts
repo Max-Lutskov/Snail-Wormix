@@ -25,9 +25,14 @@ export function createTerrainState(source: TerrainSource): TerrainState {
   return { source, craters: [] };
 }
 
+/** The terrain exactly as its source produces it, before any crater. */
+export function buildBaseTerrain(source: TerrainSource): TerrainLayout {
+  return generateHills(source.seed);
+}
+
 /** Builds the live terrain: the source's layout with all logged craters carved. */
 export function buildTerrain(state: TerrainState): TerrainLayout {
-  const layout = generateHills(state.source.seed);
+  const layout = buildBaseTerrain(state.source);
   for (const { x, y, r } of state.craters) carveCircle(layout.mask, x, y, r);
   return layout;
 }
