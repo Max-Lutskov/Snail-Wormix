@@ -116,7 +116,13 @@ export function createParallax(scene: Phaser.Scene, worldWidth: number, worldHei
       far.fillTriangle(x - 4, base, x + 4, base, x + lean, base - h);
     }
   }
-  far.fillRect(from, worldHeight * 0.8, to - from, worldHeight);
+  // Ground band under the far layer, fading in from the top so it has no hard horizon line.
+  const bandTop = worldHeight * 0.8;
+  const fade = 140;
+  far.fillGradientStyle(farColor, farColor, farColor, farColor, 0, 0, 1, 1);
+  far.fillRect(from, bandTop - fade, to - from, fade);
+  far.fillStyle(farColor, 1);
+  far.fillRect(from, bandTop, to - from, worldHeight);
 
   const near = scene.add.graphics().setScrollFactor(parallax.near).setDepth(-80);
   const nearColor = hexToInt(C.parallaxNear);

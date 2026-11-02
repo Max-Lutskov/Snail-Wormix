@@ -15,6 +15,8 @@ const G = tokens.terrain.grassFringe;
 const ROOT_DEPTH = 2;
 /** Half-width of the window used to smooth the surface before measuring its normal. */
 const NORMAL_SMOOTH = 6;
+/** Half-width (world px at mushroom scale 1) of the gap left in the fringe around a mushroom. */
+const MUSHROOM_CLEARING = 13;
 
 /** Small seeded PRNG (mulberry32), render-only. */
 function prng(seed: number): () => number {
@@ -104,6 +106,11 @@ export function paintHillsGrass(layout: TerrainLayout, seed: number): HTMLCanvas
   ctx.scale(ART_SCALE, ART_SCALE);
   ctx.lineJoin = 'round';
   const edge = surfaceEdge(layout);
+  // No blades right around mushrooms, so they aren't buried in the grass.
+  const clear = layout.decor.flatMap((d) =>
+    d.kind === 'mushroom' ? [{ x: d.x, r: MUSHROOM_CLEARING * d.scale }] : [],
+  );
+  const cleared = (x: number): boolean => clear.some((c) => Math.abs(x - c.x) < c.r);
   const rnd = prng(seed ^ 0x9e3779b9);
   const patchPhase = rnd() * Math.PI * 2;
   /** Slow wave along the edge in [0.55, 1]: patches of taller and shorter grass. */
@@ -117,7 +124,7 @@ export function paintHillsGrass(layout: TerrainLayout, seed: number): HTMLCanvas
   ctx.fillStyle = T.color;
   for (let x = rnd() * T.step; x < width; x += T.step * (0.7 + rnd() * 0.6)) {
     const y = edge.y(x);
-    if (y === null) continue;
+    if (y === null || cleared(x)) continue;
     const n = edge.normal(x);
     const length = T.lengthMin + (T.lengthMax - T.lengthMin) * rnd();
     const half = 3 + rnd() * 2;
@@ -149,7 +156,7 @@ export function paintHillsGrass(layout: TerrainLayout, seed: number): HTMLCanvas
   const B = G.back;
   for (let x = rnd() * B.step; x < width; x += B.step * (0.6 + rnd() * 0.8)) {
     const y = edge.y(x);
-    if (y === null) continue;
+    if (y === null || cleared(x)) continue;
     const n = edge.normal(x);
     const h = (B.heightMin + (B.heightMax - B.heightMin) * rnd()) * patch(x);
     ctx.fillStyle = pick(B.colors, rnd());
@@ -162,7 +169,7 @@ export function paintHillsGrass(layout: TerrainLayout, seed: number): HTMLCanvas
   for (let x = rnd() * F.step; x < width; x += F.step * (0.7 + rnd() * 0.6)) {
     if (rnd() < F.skip) continue;
     const y = edge.y(x);
-    if (y === null) continue;
+    if (y === null || cleared(x)) continue;
     const n = edge.normal(x);
     const steep = 1 - Math.abs(n.y);
     const h = (F.heightMin + (F.heightMax - F.heightMin) * rnd()) * patch(x) + F.steepExtra * steep;
