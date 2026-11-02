@@ -10,11 +10,37 @@ export interface Mushroom {
   /** Bottom center of the stem, in world pixels. */
   readonly x: number;
   readonly y: number;
+  /** 1 = the size of public/art/mushroom.svg. */
+  readonly scale: number;
 }
 
-export type Decor = Mushroom;
+export interface DewDrop {
+  readonly kind: 'dew';
+  /** Center of the drop. */
+  readonly x: number;
+  readonly y: number;
+  readonly r: number;
+}
 
-/** Mushroom silhouette (matches public/art/mushroom.svg), relative to the stem bottom. */
+export interface GrassBlade {
+  /** Offset of the blade base from the tuft x. */
+  readonly dx: number;
+  /** Y of the blade base (its lowest pixel, sunk into the ground). */
+  readonly y: number;
+  readonly height: number;
+  /** Horizontal shift of the tip relative to the base. */
+  readonly lean: number;
+}
+
+export interface GrassTuft {
+  readonly kind: 'grass';
+  readonly x: number;
+  readonly blades: readonly GrassBlade[];
+}
+
+export type Decor = Mushroom | DewDrop | GrassTuft;
+
+/** Mushroom silhouette at scale 1 (matches public/art/mushroom.svg), relative to the stem bottom. */
 export const MUSHROOM = {
   stemHalfWidth: 3,
   stemHeight: 14,
@@ -26,9 +52,9 @@ export const MUSHROOM = {
 export type MushroomPart = 'stem' | 'cap' | null;
 
 /** Which part of a mushroom covers pixel offset (dx, dy) from the stem bottom, by pixel center. */
-export function mushroomPartAt(dx: number, dy: number): MushroomPart {
-  const x = dx + 0.5;
-  const y = dy + 0.5;
+export function mushroomPartAt(dx: number, dy: number, scale = 1): MushroomPart {
+  const x = (dx + 0.5) / scale;
+  const y = (dy + 0.5) / scale;
   const { stemHalfWidth, stemHeight, capCenterY, capRadiusX, capRadiusY } = MUSHROOM;
   if (y <= capCenterY) {
     const nx = x / capRadiusX;
@@ -39,23 +65,76 @@ export function mushroomPartAt(dx: number, dy: number): MushroomPart {
   return null;
 }
 
-/** Bounding box of the mushroom stamp relative to the stem bottom. */
-export const MUSHROOM_BOUNDS = {
-  left: -MUSHROOM.capRadiusX,
-  right: MUSHROOM.capRadiusX,
-  top: MUSHROOM.capCenterY - MUSHROOM.capRadiusY,
-  bottom: 0,
-} as const;
+export interface DecorBounds {
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
+}
 
-export function stampMushroom(mask: TerrainMask, m: Mushroom): void {
+/** Absolute pixel bounds (inclusive) of a decor item. */
+export function decorBounds(d: Decor): DecorBounds {
+  switch (d.kind) {
+    case 'mushroom': {
+      const rx = Math.ceil(MUSHROOM.capRadiusX * d.scale);
+      return {
+        left: d.x - rx,
+        right: d.x + rx,
+        top: d.y + Math.floor((MUSHROOM.capCenterY - MUSHROOM.capRadiusY) * d.scale),
+        bottom: d.y,
+      };
+    }
+    case 'dew': {
+      const r = Math.ceil(d.r);
+      return {
+        left: Math.floor(d.x) - r,
+        right: Math.floor(d.x) + r,
+        top: Math.floor(d.y) - r,
+        bottom: Math.floor(d.y) + r,
+      };
+    }
+    case 'grass': {
+      let left = d.x;
+      let right = d.x;
+      let top = Infinity;
+      let bottom = -Infinity;
+      for (const b of d.blades) {
+        left = Math.min(left, d.x + b.dx + Math.min(0, b.lean));
+        right = Math.max(right, d.x + b.dx + Math.max(0, b.lean));
+        top = Math.min(top, b.y - b.height + 1);
+        bottom = Math.max(bottom, b.y);
+      }
+      return { left, right, top, bottom };
+    }
+  }
+}
+
+function bladeX(d: GrassTuft, b: GrassBlade, py: number): number {
+  const k = b.y - py; // 0 at the base
+  return d.x + b.dx + Math.floor((b.lean * k) / b.height + 0.5);
+}
+
+/** True if decor `d` covers world pixel (px, py). */
+export function decorCovers(d: Decor, px: number, py: number): boolean {
+  switch (d.kind) {
+    case 'mushroom':
+      return mushroomPartAt(px - d.x, py - d.y, d.scale) !== null;
+    case 'dew': {
+      const dx = px + 0.5 - d.x;
+      const dy = py + 0.5 - d.y;
+      return dx * dx + dy * dy <= d.r * d.r;
+    }
+    case 'grass':
+      return d.blades.some((b) => py <= b.y && py > b.y - b.height && px === bladeX(d, b, py));
+  }
+}
+
+export function stampDecor(mask: TerrainMask, d: Decor): void {
   const { width, height, data } = mask;
-  for (let dy = MUSHROOM_BOUNDS.top; dy <= MUSHROOM_BOUNDS.bottom; dy++) {
-    for (let dx = MUSHROOM_BOUNDS.left; dx <= MUSHROOM_BOUNDS.right; dx++) {
-      if (mushroomPartAt(dx, dy) === null) continue;
-      const px = m.x + dx;
-      const py = m.y + dy;
-      if (px < 0 || py < 0 || px >= width || py >= height) continue;
-      data[py * width + px] = 1;
+  const b = decorBounds(d);
+  for (let py = Math.max(0, b.top); py <= Math.min(height - 1, b.bottom); py++) {
+    for (let px = Math.max(0, b.left); px <= Math.min(width - 1, b.right); px++) {
+      if (decorCovers(d, px, py)) data[py * width + px] = 1;
     }
   }
 }

@@ -6,6 +6,15 @@ export interface SpawnPoint {
   readonly x: number;
 }
 
+/** One fluffy bump on the moss edge (generated terrain only). */
+export interface MossBump {
+  /** Center x. */
+  readonly x: number;
+  readonly diameter: number;
+  /** How far the bump rises above the scalloped base line. */
+  readonly height: number;
+}
+
 /** Everything a terrain source (generator or drawn map) produces. */
 export interface TerrainLayout {
   readonly mask: TerrainMask;
@@ -14,4 +23,6 @@ export interface TerrainLayout {
   readonly spawns: readonly SpawnPoint[];
   /** Solid surface decor (already stamped into the mask), for the renderer to paint. */
   readonly decor: readonly Decor[];
+  /** Moss bumps (already part of the mask), so the renderer can color them. */
+  readonly mossBumps: readonly MossBump[];
 }
