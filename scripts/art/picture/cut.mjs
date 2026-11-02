@@ -4,10 +4,12 @@
 // enclosed by an outline (e.g. a watering can) stay foreground.
 // The thresholds are tuned for flat cartoon art on a blue sky; check the debug image (solid
 // shown in magenta) and adjust for other pictures. Writes the map's terrain.source.png.
-// Usage: node scripts/art/picture/cut.mjs <in.png> <w> <h> <out.png> [debug.png]
+// Usage: node scripts/art/picture/cut.mjs <in.png> <w> <h> <out.png> [debug.png] [erode px]
+// `erode` trims that many px off the solid edge, dropping the light antialiased fringe where
+// the outline blends into the sky (about 1 px per 1024 px of width is enough).
 import { readPng, writePng } from './png.mjs';
 
-const [, , input, ws, hs, out, debug] = process.argv;
+const [, , input, ws, hs, out, debug, erodeArg] = process.argv;
 const W = Number(ws);
 const H = Number(hs);
 const px = readPng(input, W, H);
@@ -70,6 +72,21 @@ for (let s = 0; s < N; s++) {
     }
   }
   if (comp.length < N / 2000) for (const i of comp) solid[i] = 0;
+}
+
+for (let pass = 0; pass < Number(erodeArg ?? 0); pass++) {
+  const prev = solid.slice();
+  for (let i = 0; i < N; i++) {
+    if (!prev[i]) continue;
+    const x = i % W;
+    if (
+      (x > 0 && !prev[i - 1]) ||
+      (x < W - 1 && !prev[i + 1]) ||
+      (i >= W && !prev[i - W]) ||
+      (i < N - W && !prev[i + W])
+    )
+      solid[i] = 0;
+  }
 }
 
 const rgba = new Uint8Array(N * 4);

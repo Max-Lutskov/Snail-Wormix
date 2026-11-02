@@ -1,8 +1,8 @@
 {
   "id": "glade",
   "name": "Галявина",
-  "width": 1024,
-  "height": 768,
-  "waterLevel": 760,
-  "spawns": [{ "x": 70 }, { "x": 790 }]
+  "width": 1600,
+  "height": 720,
+  "waterLevel": 712,
+  "spawns": [{ "x": 180 }, { "x": 1420 }]
 }
