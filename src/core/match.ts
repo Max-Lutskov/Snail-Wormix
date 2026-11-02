@@ -77,6 +77,12 @@ export type MatchEvent =
       readonly changed: PixelRect | null;
       readonly removedDecor: readonly number[];
     }
+  | {
+      readonly kind: 'dig';
+      readonly crater: Crater;
+      readonly changed: PixelRect | null;
+      readonly removedDecor: readonly number[];
+    }
   | { readonly kind: 'damage'; readonly snail: number; readonly amount: number }
   | { readonly kind: 'splash' }
   | { readonly kind: 'turn'; readonly active: number }
@@ -213,10 +219,23 @@ function fly(
     wind: s.wind,
     snails: s.snails,
   });
-  if (step.kind === 'flying') return { ...s, projectile: step.projectile };
+  if (step.kind === 'flying') {
+    if (!step.carve) return { ...s, projectile: step.projectile };
+    const crater: Crater = { ...step.carve, r: WEAPONS[projectile.weapon].craterRadius };
+    const carved = addCrater(s.terrain, layout, crater);
+    events.push({
+      kind: 'dig',
+      crater,
+      changed: carved.changed,
+      removedDecor: carved.removedDecor,
+    });
+    return { ...s, terrain: carved.state, projectile: step.projectile };
+  }
   const after: MatchState = { ...s, projectile: null, phase: 'retreat', phaseTicks: 0 };
   if (step.kind === 'gone') {
-    if (projectile.y >= layout.waterLevel - 20) events.push({ kind: 'splash' });
+    if (!projectile.drill && projectile.y >= layout.waterLevel - 20) {
+      events.push({ kind: 'splash' });
+    }
     return after;
   }
   const weapon = WEAPONS[projectile.weapon];

@@ -57,7 +57,7 @@ const WEAPON_KEYS = ['ONE', 'TWO', 'THREE', 'FOUR'] as const;
 /**
  * Match scene: a hot-seat duel, one snail per team, taking turns.
  * ←/→ or A/D = crawl, W/↑/space = jump, drag anywhere and release = slingshot shot,
- * 1/2 = weapon, Enter = new match when over, R = new generated hills, M = next drawn map.
+ * 1/2/3 = weapon, Enter = new match when over, R = new generated hills, M = next drawn map.
  */
 export class MatchScene extends Phaser.Scene {
   private match!: MatchState;
@@ -225,6 +225,13 @@ export class MatchScene extends Phaser.Scene {
           this.updateInfo();
         });
         break;
+      case 'dig':
+        // A drill boring: just the cut, a crater per tick, plus a puff of soil.
+        this.view?.onCrater(e.crater);
+        this.decor?.remove(e.removedDecor);
+        this.grass?.onCrater(e.crater);
+        this.dust(e.crater.x, e.crater.y);
+        break;
       case 'damage': {
         const s = this.match.snails.find((x) => x.id === e.snail);
         if (s) this.popup(s.x, s.y - SNAIL.height - 30, `-${e.amount}`);
@@ -233,6 +240,22 @@ export class MatchScene extends Phaser.Scene {
       default:
         break;
     }
+  }
+
+  /** A small soil puff where a drill bores. */
+  private dust(x: number, y: number): void {
+    const c = this.add
+      .circle(x, y, 7, Phaser.Display.Color.HexStringToColor(tokens.colors.soil.clump).color, 0.8)
+      .setDepth(26);
+    this.tweens.add({
+      targets: c,
+      scale: 2.2,
+      alpha: 0,
+      duration: 380,
+      onComplete: () => {
+        c.destroy();
+      },
+    });
   }
 
   /** A damage number floating up from a snail. */
@@ -405,7 +428,7 @@ export class MatchScene extends Phaser.Scene {
     this.registry.set(
       DEBUG_INFO,
       `${where} · craters ${craters.length} · mask ${hash}\n` +
-        'A/D: crawl · W/space: jump · drag+release: shoot · 1/2: weapon · R: hills · M: map',
+        'A/D: crawl · W/space: jump · drag+release: shoot · 1/2/3: weapon · R: hills · M: map',
     );
   }
 }
