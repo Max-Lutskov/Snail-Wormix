@@ -26,6 +26,12 @@ export const SNAIL = {
   /** Jump velocity, px per tick: forward and up. */
   jumpForward: 2.2,
   jumpUp: 4.2,
+  /**
+   * Air control: ←/→ in the air push the sideways speed toward ±airSpeed by airControl per
+   * tick, enough to turn a jump around. Faster flights (thrown by a blast) can't be steered.
+   */
+  airControl: 0.12,
+  airSpeed: 2.2,
   /** Share of horizontal speed kept (reversed) when hitting a wall in the air. */
   wallBounce: 0.35,
   /** Knockback: peak speed at the crater center, and reach beyond the crater radius. */
@@ -110,7 +116,9 @@ export function damageSnail(snail: Snail, amount: number): Snail {
 /** Advances the snail by one tick. Dead snails don't change. */
 export function stepSnail(snail: Snail, input: SnailInput, world: SnailWorld): Snail {
   if (!snail.alive) return snail;
-  const next = snail.grounded ? walk(snail, input, world.mask) : fly(snail, world.mask);
+  const next = snail.grounded
+    ? walk(snail, input, world.mask)
+    : fly(steer(snail, input), world.mask);
   return next.y >= world.waterLevel ? { ...next, alive: false, hp: 0, vx: 0, vy: 0 } : next;
 }
 
@@ -143,6 +151,14 @@ function walk(snail: Snail, input: SnailInput, mask: TerrainMask): Snail {
     return { ...snail, x, y, facing, grounded: false, vx: input.move * SNAIL.walkSpeed, vy: 0 };
   }
   return { ...snail, x, y, facing };
+}
+
+/** Air control of the snail's own jump (see SNAIL.airControl). */
+function steer(snail: Snail, input: SnailInput): Snail {
+  if (input.move === 0 || Math.abs(snail.vx) > SNAIL.airSpeed + 1e-9) return snail;
+  const target = input.move * SNAIL.airSpeed;
+  const dv = Math.max(-SNAIL.airControl, Math.min(SNAIL.airControl, target - snail.vx));
+  return { ...snail, vx: snail.vx + dv, facing: input.move };
 }
 
 function fly(snail: Snail, mask: TerrainMask): Snail {

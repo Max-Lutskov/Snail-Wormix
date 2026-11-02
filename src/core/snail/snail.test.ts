@@ -142,6 +142,34 @@ describe('snail jump', () => {
   });
 });
 
+describe('snail air control', () => {
+  /** Jumps right, then holds `move` in the air until landing. */
+  function jumpHolding(move: -1 | 0 | 1): Snail {
+    const w = world(flat(200));
+    let s = stepSnail(spawnSnail(1, 0, 200, w), { move: 0, jump: true }, w);
+    for (let i = 0; i < 300 && !s.grounded; i++) s = stepSnail(s, { move, jump: false }, w);
+    return s;
+  }
+
+  it('steers a jump in the air, even back the other way', () => {
+    const straight = jumpHolding(0);
+    const back = jumpHolding(-1);
+    const further = jumpHolding(1);
+    expect(back.x).toBeLessThan(straight.x - 40);
+    expect(back.facing).toBe(-1);
+    expect(further.x).toBeGreaterThanOrEqual(straight.x);
+  });
+
+  it('cannot steer a flight from a blast', () => {
+    const w = world(flat(200));
+    const thrown = applyExplosion(spawnSnail(1, 0, 100, w), { x: 80, y: 195, r: 30 });
+    expect(thrown.vx).toBeGreaterThan(SNAIL.airSpeed);
+    const a = stepSnail(thrown, { move: 0, jump: false }, w);
+    const b = stepSnail(thrown, { move: -1, jump: false }, w);
+    expect(b.vx).toBe(a.vx);
+  });
+});
+
 describe('snail knockback', () => {
   it('is thrown away from an explosion and ignores far ones', () => {
     const w = world(flat(200));
