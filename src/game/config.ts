@@ -1,7 +1,10 @@
 import Phaser from 'phaser';
 import { MatchScene } from './scenes/MatchScene';
 
-/** Logical resolution; the canvas is scaled to fit the screen (landscape, 16:9). */
+/**
+ * Base logical resolution. EXPAND keeps the height at 720 and widens the visible area on
+ * wider screens (a ~19.5:9 phone sees ~1560 of the 1600-wide world) instead of letterboxing.
+ */
 export const GAME_WIDTH = 1280;
 export const GAME_HEIGHT = 720;
 
@@ -9,9 +12,9 @@ export function createGameConfig(parent: string): Phaser.Types.Core.GameConfig {
   return {
     type: Phaser.AUTO,
     parent,
-    backgroundColor: '#1d2b3a',
+    backgroundColor: '#cdeee4',
     scale: {
-      mode: Phaser.Scale.FIT,
+      mode: Phaser.Scale.EXPAND,
       autoCenter: Phaser.Scale.CENTER_BOTH,
       width: GAME_WIDTH,
       height: GAME_HEIGHT,
