@@ -10,6 +10,11 @@
     "grass": true
   },
   {
+    "id": "garden",
+    "back": true,
+    "grass": true
+  },
+  {
     "id": "island",
     "back": false,
     "grass": true
