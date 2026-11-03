@@ -1,5 +1,6 @@
 import type Phaser from 'phaser';
 import { launch, muzzle, previewPath, type ShotWorld } from '../../core/projectile';
+import { createMask, isSolid, type TerrainMask } from '../../core/terrain/mask';
 import type { Snail } from '../../core/snail/snail';
 import type { WeaponId } from '../../core/weapons';
 import { hexToInt, tokens } from '../art/tokens';
@@ -7,7 +8,10 @@ import { hexToInt, tokens } from '../art/tokens';
 /** Pull length (CSS px) that gives full power. */
 const FULL_PULL_CSS = 180;
 /** Ticks between preview dots, so 7 dots cover the start of the arc. */
-const DOT_STRIDE = 4;
+/** Preview dots sit this far apart along the arc (world px), so the line has a steady length. */
+const DOT_SPACING = 26;
+/** Ticks of flight simulated for the preview (enough for the dots at any pull). */
+const PREVIEW_TICKS = 90;
 const DEPTH = 20;
 const BAND = hexToInt(tokens.colors.hud.accent);
 const OUTLINE = hexToInt(tokens.colors.snail.outline);
@@ -140,16 +144,38 @@ export class Slingshot {
     g.fillStyle(BAND, 1).fillCircle(px, py, ring);
     g.lineStyle(2, OUTLINE, 1).strokeCircle(px, py, ring);
 
+    // The start of the arc, always the same length: flown through open air (so it doesn't stop
+    // where it meets the ground and jump back out as the aim turns), dots at even distances
+    // along it, and dots that fall inside the terrain simply not drawn.
     const shot = launch(snail, weapon, toVector(aim));
+    const air = this.openAir(world.mask);
+    const path = previewPath(shot, { ...world, mask: air, snails: [] }, PREVIEW_TICKS);
     const dots = tokens.input.trajectoryPreviewDots;
-    const path = previewPath(shot, world, dots * DOT_STRIDE);
-    for (let i = 0; i < dots; i++) {
-      const p = path[(i + 1) * DOT_STRIDE - 1];
-      if (!p) break;
-      const alpha = 1 - i / dots;
-      g.fillStyle(OUTLINE, alpha * 0.8).fillCircle(p.x, p.y, 3.4);
-      g.fillStyle(0xffffff, alpha).fillCircle(p.x, p.y, 2.4);
+    let prev = { x: shot.x, y: shot.y };
+    let travelled = 0;
+    let drawn = 0;
+    for (const p of path) {
+      travelled += Math.hypot(p.x - prev.x, p.y - prev.y);
+      prev = p;
+      if (travelled < DOT_SPACING * (drawn + 1)) continue;
+      const alpha = 1 - drawn / dots;
+      drawn++;
+      if (!isSolid(world.mask, p.x, p.y)) {
+        g.fillStyle(OUTLINE, alpha * 0.8).fillCircle(p.x, p.y, 3.4);
+        g.fillStyle(0xffffff, alpha).fillCircle(p.x, p.y, 2.4);
+      }
+      if (drawn >= dots) break;
     }
+  }
+
+  private air: TerrainMask | null = null;
+
+  /** An empty mask the size of the world, for flying the preview through open air. */
+  private openAir(mask: TerrainMask): TerrainMask {
+    if (this.air?.width !== mask.width || this.air.height !== mask.height) {
+      this.air = createMask(mask.width, mask.height);
+    }
+    return this.air;
   }
 
   destroy(): void {
