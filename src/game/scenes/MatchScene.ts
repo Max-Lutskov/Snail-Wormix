@@ -553,8 +553,7 @@ export class MatchScene extends Phaser.Scene {
   /** Sets the adaptive music from the match: calm while aiming, tense in flight, dark when low. */
   private musicMood(): void {
     const m = this.match;
-    const intensity =
-      m.phase === 'flight' ? 1 : m.phase === 'retreat' ? 0.55 : m.phase === 'over' ? 0 : 0.2;
+    const intensity = m.phase === 'flight' ? 1 : m.phase === 'retreat' ? 0.45 : 0;
     const danger = m.snails.some((s) => s.alive && s.hp <= 30) ? 1 : 0;
     const key = `${this.menu.open ? 1 : 0}${intensity}${danger}`;
     if (key === this.moodKey) return;

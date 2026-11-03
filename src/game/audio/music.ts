@@ -101,7 +101,7 @@ export class SynthMusic {
     };
     fade(this.groove, mood.menu ? 0.35 : 0.85);
     fade(this.tension, mood.menu ? 0 : mood.intensity, 0.25);
-    fade(this.pad, mood.menu ? 0.6 : 0.15 + mood.danger * 0.6, 0.8);
+    fade(this.pad, mood.menu ? 0.6 : mood.danger * 0.5, 0.8);
     this.bassFilter.frequency.setTargetAtTime(
       mood.menu ? 260 : 380 + mood.intensity * 1100,
       t,
@@ -136,14 +136,25 @@ export class SynthMusic {
     const b = BASS[s] ?? 0;
     if (b !== 0 && (!menu || s % 4 === 0)) this.bass(midi(root + (b === 2 ? 12 : 0)), t);
 
-    // Tension: claps on 2 and 4, sixteenth hats, an arpeggio over the chord.
-    if (s === 4 || s === 12) this.clap(t);
-    this.hat(t, s % 2 === 0 ? 0.1 : 0.06, this.tension);
-    const note = chord[s % 3] ?? 57;
-    this.arp(midi(note + (Math.floor(s / 3) % 2 === 0 ? 12 : 0)), t);
+    // Tension adds to the same groove rather than playing a tune of its own: claps on 2 and
+    // 4, sixteenth hats, and a pluck on the eighths walking up and down the chord in time
+    // with the bass, all in one octave (so it never sounds like a second song).
+    if (this.mood.menu || this.mood.intensity < 0.05) {
+      // Silent layer: don't spend voices on it.
+    } else {
+      if (s === 4 || s === 12) this.clap(t);
+      this.hat(t, s % 2 === 0 ? 0.09 : 0.05, this.tension);
+      if (s % 2 === 0) {
+        const walk: readonly number[] = [0, 1, 2, 1];
+        const note = chord[walk[(s / 2) % 4] ?? 0] ?? 57;
+        this.arp(midi(note), t);
+      }
+    }
 
-    // Pad: the bar's chord, held.
-    if (s === 0) for (const n of chord) this.padNote(midi(n - 12), t, STEP * 16);
+    // Pad: the bar's chord, held (in the menu, and under the game when someone is low).
+    if (s === 0 && (this.mood.menu || this.mood.danger > 0)) {
+      for (const n of chord) this.padNote(midi(n - 12), t, STEP * 16);
+    }
   }
 
   private env(g: GainNode, t: number, peak: number, attack: number, decay: number): void {
@@ -226,10 +237,10 @@ export class SynthMusic {
     f.type = 'lowpass';
     f.frequency.value = 2400;
     const g = this.ctx.createGain();
-    this.env(g, t, 0.07, 0.004, STEP * 0.9);
+    this.env(g, t, 0.06, 0.004, STEP * 1.6);
     o.connect(f).connect(g).connect(this.tension);
     o.start(t);
-    o.stop(t + STEP);
+    o.stop(t + STEP * 1.8);
   }
 
   private padNote(freq: number, t: number, dur: number): void {
