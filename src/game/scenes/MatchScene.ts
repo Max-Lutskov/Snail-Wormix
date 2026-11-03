@@ -222,9 +222,15 @@ export class MatchScene extends Phaser.Scene {
       },
     );
     this.input.on('pointerdown', this.press);
-    this.menu = new Menu(this.mapChoices(), (mode, choice, level) => {
-      this.pick(mode, choice, level);
-    });
+    this.menu = new Menu(
+      this.mapChoices(),
+      (mode, choice, level) => {
+        this.pick(mode, choice, level);
+      },
+      () => {
+        this.hudJson = '';
+      },
+    );
     // ?room=CODE joins a friend's room at once; ?map=<id> plays it on one device (dev);
     // otherwise the menu opens over a map.
     const params = new URLSearchParams(window.location.search);
@@ -309,8 +315,9 @@ export class MatchScene extends Phaser.Scene {
     const keys = ((this.keys.right.some((k) => k.isDown) ? 1 : 0) -
       (this.keys.left.some((k) => k.isDown) ? 1 : 0)) as MatchInput['move'];
     const move = keys !== 0 ? keys : this.touchMove;
-    if (this.menu.open) this.tickCarry = 0;
-    else if (this.online) this.stepOnline(delta, move);
+    // Online the match goes on behind the menu (the server doesn't wait); offline it pauses.
+    if (this.online) this.stepOnline(delta, this.menu.open ? 0 : move);
+    else if (this.menu.open) this.tickCarry = 0;
     else this.stepLocal(delta, move);
     if (!this.canAim()) this.slingshot.cancel();
 
@@ -509,6 +516,8 @@ export class MatchScene extends Phaser.Scene {
 
   /** A choice from the menu: on one device, against the bot, or a room to invite a friend. */
   private pick(mode: GameMode, source: TerrainSource, level: BotLevel): void {
+    this.online?.close();
+    this.online = null;
     this.overview = false;
     this.fitCamera();
     this.bot =
@@ -529,14 +538,14 @@ export class MatchScene extends Phaser.Scene {
     if (mode === 'online') this.goOnline(null, source);
   }
 
-  /** Leaves the match (and the room, online) for the start menu. */
+  /**
+   * Opens the menu over the match: «Продовжити» goes back to it, a new pick leaves it (and the
+   * room, online).
+   */
   private openMenu(): void {
-    this.online?.close();
-    this.online = null;
-    this.bot = null;
     this.slingshot.cancel();
     this.hudJson = '';
-    this.menu.show();
+    this.menu.show(true);
   }
 
   /**

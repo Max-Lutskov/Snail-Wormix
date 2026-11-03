@@ -116,5 +116,7 @@ describe('room', () => {
     expect(r.join(c)).toBe(1);
     const state = c.got.find((m) => m.t === 'state');
     expect(state).toMatchObject({ t: 'state', tick: 100 });
+    // ...and hears that the other player is still there.
+    expect(c.got).toContainEqual({ t: 'peer', present: true });
   });
 });

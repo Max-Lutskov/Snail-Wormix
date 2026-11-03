@@ -36,6 +36,7 @@ const CSS = `
   border-radius: 18px; touch-action: manipulation; }
 .menu-mode { background: ${H.accent}; color: ${H.panel}; padding: 14px 22px; min-width: 220px;
   min-height: 64px; font-size: clamp(16px, 3.4vh, 20px); font-weight: bold; text-align: left; }
+.menu-resume { display: block; margin: 0 auto 14px; text-align: center; }
 .menu-mode small { display: block; font-weight: normal; font-size: 13px; opacity: 0.85; margin-top: 2px; }
 .menu-maps { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
 .menu-map { background: #22302a; color: #fff; padding: 6px 6px 8px; border-color: #3a4a3e; }
@@ -59,6 +60,7 @@ export class Menu {
   constructor(
     private readonly maps: readonly MapChoice[],
     private readonly onPick: (mode: GameMode, source: TerrainSource, level: BotLevel) => void,
+    private readonly onResume: () => void,
   ) {
     if (!document.getElementById('menu-css')) {
       const style = document.createElement('style');
@@ -80,7 +82,11 @@ export class Menu {
     return !this.root.hidden;
   }
 
-  show(): void {
+  /** Whether a match is waiting behind the menu (opened mid-game): then it offers to go back. */
+  private resumable = false;
+
+  show(resumable = false): void {
+    this.resumable = resumable;
     this.modes();
     this.root.hidden = false;
   }
@@ -101,6 +107,17 @@ export class Menu {
     const panel = this.panel();
     panel.innerHTML =
       '<h1>Snail Artillery</h1><p class="menu-sub">Равлики з гарматами, по черзі.</p>';
+    if (this.resumable) {
+      const resume = document.createElement('button');
+      resume.className = 'menu-mode menu-resume';
+      resume.innerHTML = '▶ Продовжити гру<small>повернутися в поточний матч</small>';
+      resume.addEventListener('click', () => {
+        audio.click();
+        this.hide();
+        this.onResume();
+      });
+      panel.append(resume);
+    }
     const row = document.createElement('div');
     row.className = 'menu-modes';
     const mode = (m: GameMode, title: string, hint: string): void => {

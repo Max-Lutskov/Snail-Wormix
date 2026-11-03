@@ -70,6 +70,8 @@ export class Room {
     this.seats[seat] = peer;
     peer.send({ t: 'room', room: this.id, seat });
     this.broadcast({ t: 'peer', present: true }, peer);
+    // The newcomer (or a player back after a dropped link) learns whether the other is here.
+    peer.send({ t: 'peer', present: this.seats.some((s) => s !== null && s !== peer) });
     if (this.match) {
       peer.send({ t: 'state', tick: this.tick, state: this.match });
     } else if (this.seats.every((s) => s !== null)) {
