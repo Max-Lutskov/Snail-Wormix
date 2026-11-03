@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { audio } from './game/audio/audio';
 import { createGameConfig, watchResize } from './game/config';
 
 const parent = document.getElementById('game');
@@ -6,6 +7,18 @@ if (!parent) throw new Error('main: #game element is missing');
 
 const game = new Phaser.Game(createGameConfig(parent));
 watchResize(game, parent);
+
+// Browsers keep audio off until a gesture: every tap or key (re)starts it. Capture phase, so
+// taps the menu stops from reaching the game still count.
+for (const type of ['pointerdown', 'keydown'] as const) {
+  window.addEventListener(
+    type,
+    () => {
+      audio.unlock();
+    },
+    { capture: true },
+  );
+}
 
 // Phones: the first tap goes fullscreen (landscape where the browser allows locking it), so
 // the browser's bars don't eat the screen. Needs a user gesture, hence the DOM listener.

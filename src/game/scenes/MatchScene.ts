@@ -42,6 +42,7 @@ import { ensureFxTextures } from '../fx/fxTextures';
 import { Slingshot, toVector } from '../input/Slingshot';
 import { mapLookup, preloadMaps, readMaps, type LoadedMap } from '../maps/maps';
 import { Online } from '../net/Online';
+import { audio } from '../audio/audio';
 import { Menu, type GameMode, type MapChoice } from '../menu/Menu';
 import { mapThumbnail } from '../menu/thumbs';
 import { DecorView, MUSHROOM_SVG_SCALE, MUSHROOM_TEXTURE } from '../terrain/DecorView';
@@ -439,9 +440,15 @@ export class MatchScene extends Phaser.Scene {
 
   private applyStep(input: MatchInput): void {
     const team = this.match.snails[this.match.active]?.team;
+    const before = this.match.snails[this.match.active];
     const r = stepMatch(this.match, input, this.layout);
     this.match = r.state;
     for (const e of r.events) this.onEvent(e);
+    // A jump (the core has no event for it): the active snail just left the ground upward.
+    const after = this.match.snails[this.match.active];
+    if (before?.grounded && after && !after.grounded && after.vy < -3 && input.jump) {
+      audio.jump(this.pan(after.x));
+    }
     // A new turn: the held crawl belongs to nobody now.
     if (this.match.snails[this.match.active]?.team !== team) this.sentMove = 0;
   }
@@ -540,9 +547,23 @@ export class MatchScene extends Phaser.Scene {
     };
   }
 
+  /** Stereo position of world x on screen, -1 (left edge) to 1 (right edge). */
+  private pan(x: number): number {
+    const v = this.cameras.main.worldView;
+    return (x - v.centerX) / (v.width / 2);
+  }
+
+  /** How far off screen world x is, 0 (on screen) up to 1 (a screen width away or more). */
+  private offscreen(x: number): number {
+    const v = this.cameras.main.worldView;
+    const out = Math.max(v.x - x, x - (v.x + v.width), 0);
+    return Math.min(1, out / v.width);
+  }
+
   private onEvent(e: MatchEvent): void {
     switch (e.kind) {
       case 'explosion':
+        audio.explosion(this.pan(e.crater.x), e.crater.r, this.offscreen(e.crater.x));
         this.impact = { x: e.crater.x, y: e.crater.y, until: this.time.now + IMPACT_HOLD_MS };
         // Core has already carved the mask; the views catch up under the flash.
         playExplosion(this, e.crater, this.layout.mask, () => {
@@ -556,6 +577,7 @@ export class MatchScene extends Phaser.Scene {
         // The camera rests where the drill stops boring.
         this.impact = { x: e.crater.x, y: e.crater.y, until: this.time.now + IMPACT_HOLD_MS };
         // A drill boring: just the cut, a crater per tick, plus a puff of soil.
+        audio.dig(this.pan(e.crater.x));
         this.view?.onCrater(e.crater);
         this.decor?.remove(e.removedDecor);
         this.grass?.onCrater(e.crater);
@@ -563,12 +585,18 @@ export class MatchScene extends Phaser.Scene {
         break;
       case 'hide': {
         const s = this.match.snails.find((x) => x.id === e.snail);
-        if (s) this.popup(s.x, s.y - SNAIL.height - 30, 'Сховався!', tokens.colors.hud.accent);
+        if (s) {
+          this.popup(s.x, s.y - SNAIL.height - 30, 'Сховався!', tokens.colors.hud.accent);
+          audio.hide(this.pan(s.x));
+        }
         break;
       }
       case 'damage': {
         const s = this.match.snails.find((x) => x.id === e.snail);
-        if (s) this.popup(s.x, s.y - SNAIL.height - 30, `-${e.amount}`);
+        if (s) {
+          this.popup(s.x, s.y - SNAIL.height - 30, `-${e.amount}`);
+          audio.ouch(this.pan(s.x), e.amount);
+        }
         const now = this.time.now;
         this.snailViews[this.match.snails.findIndex((x) => x.id === e.snail)]?.hurt();
         this.angryUntil.set(e.snail, now + 4500);
@@ -577,11 +605,23 @@ export class MatchScene extends Phaser.Scene {
         if (shooter && shooter.id !== e.snail) this.joyUntil.set(shooter.id, now + 2500);
         break;
       }
-      case 'fire':
+      case 'fire': {
         this.snailViews[this.match.snails.findIndex((x) => x.id === e.snail)]?.fired();
+        const p = this.match.projectile;
+        if (p) audio.shoot(this.pan(p.x), Math.min(1, Math.hypot(p.vx, p.vy) / 15));
         break;
+      }
+      case 'splash': {
+        const sunk = this.match.snails.find((s) => !s.alive && s.y >= this.layout.waterLevel);
+        audio.splash(this.pan(sunk?.x ?? this.match.projectile?.x ?? this.cameras.main.midPoint.x));
+        break;
+      }
       case 'turn':
         this.glideFrom = this.cameras.main.midPoint.clone();
+        audio.turn();
+        break;
+      case 'over':
+        if (e.winner >= 0) audio.win();
         break;
       default:
         break;

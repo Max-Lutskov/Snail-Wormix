@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import type { WeaponId } from '../../core/weapons';
 import { hexToInt, tokens } from '../art/tokens';
+import { audio } from '../audio/audio';
 import { renderSize, devicePixelRatio } from '../display';
 
 /** Registry key MatchScene writes its debug line to. */
@@ -277,6 +278,7 @@ export class HudScene extends Phaser.Scene {
     }
     this.placeStick(W, Hh, this.touch && state.winner === null);
     this.overviewButton(W, state.overview);
+    this.muteButton(W);
     if (state.winner !== null) this.victory(W, Hh, state);
     if (state.banner) this.banner(W, Hh, state.banner);
     else this.bannerText = null;
@@ -333,6 +335,32 @@ export class HudScene extends Phaser.Scene {
       },
     );
     this.zones.push(zone);
+  }
+
+  /** Under the overview button: sound on and off. */
+  private muteButton(W: number): void {
+    const x = W - INSET - SLOT;
+    const y = INSET + CARD.h + 10 + SLOT + 10;
+    const muted = audio.isMuted;
+    this.button(x, y, (g, cx, cy) => {
+      g.fillStyle(0xffffff, 1);
+      g.fillRect(cx - 11, cy - 5, 6, 10);
+      g.fillTriangle(cx - 6, cy - 5, cx + 3, cy - 12, cx + 3, cy + 12);
+      g.fillTriangle(cx - 6, cy + 5, cx + 3, cy - 12, cx + 3, cy + 12);
+      g.lineStyle(2.5, 0xffffff, 1);
+      if (muted) {
+        g.lineBetween(cx + 6, cy - 6, cx + 13, cy + 6);
+        g.lineBetween(cx + 13, cy - 6, cx + 6, cy + 6);
+      } else {
+        g.beginPath();
+        g.arc(cx + 4, cy, 7, -0.8, 0.8);
+        g.strokePath();
+      }
+    }).on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: StoppableEvent) => {
+      e.stopPropagation();
+      audio.setMuted(!audio.isMuted);
+      this.layout();
+    });
   }
 
   /** Top right, under the card: zoom out to the whole map and back. */

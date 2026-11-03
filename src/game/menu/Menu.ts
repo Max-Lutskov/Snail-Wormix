@@ -5,6 +5,7 @@
 
 import type { BotLevel } from '../../core/bot';
 import type { TerrainSource } from '../../core/terrain/state';
+import { audio } from '../audio/audio';
 import { tokens } from '../art/tokens';
 
 export type GameMode = 'local' | 'bot' | 'online';
@@ -44,6 +45,10 @@ const CSS = `
 .menu-levels { display: flex; gap: 8px; justify-content: center; margin: 0 0 clamp(10px, 2.5vh, 18px); }
 .menu-level { background: #22302a; color: #fff; padding: 8px 16px; border-color: #3a4a3e; }
 .menu-level[aria-pressed='true'] { background: ${H.accent}; color: ${H.panel}; border-color: ${tokens.colors.snail.outline}; }
+.menu-extras { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;
+  margin-top: clamp(12px, 3vh, 22px); }
+.menu-extra { background: #22302a; color: #fff; padding: 8px 16px; border-color: #3a4a3e;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-back { margin-top: clamp(10px, 2.5vh, 18px); background: transparent; color: #fff;
   padding: 8px 18px; border-color: #3a4a3e; }
 `;
@@ -103,6 +108,7 @@ export class Menu {
       b.className = 'menu-mode';
       b.innerHTML = `${title}<small>${hint}</small>`;
       b.addEventListener('click', () => {
+        audio.click();
         this.mapsFor(m);
       });
       row.append(b);
@@ -111,6 +117,42 @@ export class Menu {
     mode('local', 'Грати вдвох', 'на одному пристрої, по черзі');
     mode('online', 'Грати з другом', 'за посиланням, кожен на своєму');
     panel.append(row);
+    panel.append(this.extras());
+  }
+
+  /** Sound on/off and the player's own music (a file from this device, never uploaded). */
+  private extras(): HTMLDivElement {
+    const row = document.createElement('div');
+    row.className = 'menu-extras';
+    const sound = document.createElement('button');
+    sound.className = 'menu-extra';
+    const label = (): string => (audio.isMuted ? '🔇 Звук вимкнено' : '🔊 Звук увімкнено');
+    sound.textContent = label();
+    sound.addEventListener('click', () => {
+      audio.setMuted(!audio.isMuted);
+      sound.textContent = label();
+    });
+    const music = document.createElement('button');
+    music.className = 'menu-extra';
+    const musicLabel = (): string => (audio.trackName ? `🎵 ${audio.trackName}` : '🎵 Своя музика');
+    music.textContent = musicLabel();
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'audio/*';
+    input.hidden = true;
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      void audio.setTrack(file).then(() => {
+        audio.unlock();
+        music.textContent = musicLabel();
+      });
+    });
+    music.addEventListener('click', () => {
+      input.click();
+    });
+    row.append(sound, music, input);
+    return row;
   }
 
   private mapsFor(mode: GameMode): void {
