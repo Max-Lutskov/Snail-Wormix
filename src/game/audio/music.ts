@@ -2,7 +2,7 @@
  * The game's own music, synthesized live: dark electro with a bouncy bass, 112 BPM, A minor.
  * It adapts to the game: a calm pad in the menu; kick, hats and a side-chained bass while
  * aiming; claps, fast hats, a pluck and a brighter bass while a shot flies; and when someone
- * is low on health, a slow minor melody (with a dotted-eighth echo) over a pad that pumps with
+ * is low on health, a slow dark synth melody (with a dotted-eighth echo) over a pad that pumps with
  * the kick. Layers cross-fade; the melody comes in on the next bar, like a part of the song.
  *
  * Notes are scheduled a little ahead on the audio clock (the usual Web Audio look-ahead), so
@@ -109,7 +109,7 @@ export class SynthMusic {
     feedback.gain.value = 0.32;
     const tone = ctx.createBiquadFilter();
     tone.type = 'lowpass';
-    tone.frequency.value = 1800;
+    tone.frequency.value = 1100;
     this.echo.connect(tone).connect(feedback).connect(this.echo);
     const wet = ctx.createGain();
     wet.gain.value = 0.5;
@@ -308,41 +308,51 @@ export class SynthMusic {
     o.stop(t + STEP * 1.8);
   }
 
-  /** A melody note: soft triangle with a sine an octave up, gentle vibrato, into the echo. */
+  /**
+   * A melody note, a dark synth lead: two detuned saws an octave below the written note with a
+   * square sub under them, through a resonant low-pass that opens at the start of the note
+   * and closes down; only a hint of vibrato; into the echo.
+   */
   private lead(freq: number, t: number, dur: number): void {
+    const low = freq / 2;
     const g = this.ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.13, t + 0.03);
-    g.gain.setValueAtTime(0.11, t + Math.max(0.05, dur - 0.12));
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.15);
+    g.gain.exponentialRampToValueAtTime(0.12, t + 0.04);
+    g.gain.setValueAtTime(0.1, t + Math.max(0.06, dur - 0.12));
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.2);
     const f = this.ctx.createBiquadFilter();
     f.type = 'lowpass';
-    f.frequency.value = 2600;
+    f.Q.value = 5;
+    f.frequency.setValueAtTime(380, t);
+    f.frequency.exponentialRampToValueAtTime(1500, t + 0.12);
+    f.frequency.exponentialRampToValueAtTime(700, t + Math.max(0.2, dur));
     f.connect(g);
     g.connect(this.melody);
     g.connect(this.echo);
     const vib = this.ctx.createOscillator();
-    vib.frequency.value = 5.5;
+    vib.frequency.value = 4.5;
     const depth = this.ctx.createGain();
     depth.gain.setValueAtTime(0, t);
-    depth.gain.linearRampToValueAtTime(7, t + Math.min(0.3, dur));
+    depth.gain.linearRampToValueAtTime(3, t + Math.min(0.4, dur));
     vib.connect(depth);
-    for (const [wave, mult, vol] of [
-      ['triangle', 1, 1],
-      ['sine', 2, 0.25],
+    for (const [wave, mult, cents, vol] of [
+      ['sawtooth', 1, -9, 0.6],
+      ['sawtooth', 1, 9, 0.6],
+      ['square', 0.5, 0, 0.35],
     ] as const) {
       const o = this.ctx.createOscillator();
       o.type = wave;
-      o.frequency.value = freq * mult;
+      o.frequency.value = low * mult;
+      o.detune.value = cents;
       depth.connect(o.detune);
       const v = this.ctx.createGain();
       v.gain.value = vol;
       o.connect(v).connect(f);
       o.start(t);
-      o.stop(t + dur + 0.2);
+      o.stop(t + dur + 0.25);
     }
     vib.start(t);
-    vib.stop(t + dur + 0.2);
+    vib.stop(t + dur + 0.25);
   }
 
   private padNote(freq: number, t: number, dur: number): void {
