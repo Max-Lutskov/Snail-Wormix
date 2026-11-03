@@ -155,7 +155,10 @@ export class HudScene extends Phaser.Scene {
       },
       { capture: true },
     );
-    // Two fingers: one on the stick while the other aims.
+    // Two fingers: one on the stick while the other aims. Every scene hears every finger: a
+    // press is routed once, by MatchScene (see owns / stickCanTake), and after that a finger
+    // passing over a HUD button or the stick area must not cut off the aim it is pulling.
+    this.input.manager.globalTopOnly = false;
     this.input.addPointer(2);
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (p.id === this.stick.id) this.dragStick(p);
@@ -422,9 +425,9 @@ export class HudScene extends Phaser.Scene {
   }
 
   /**
-   * A floating stick: it waits dimmed in the bottom-left corner, and a touch anywhere in the
-   * lower left of the screen brings it under the thumb, centred where the finger landed (the
-   * slingshot can't start there; aim from anywhere else).
+   * A floating stick: it waits dimmed in the bottom-left corner, and a touch in the lower left
+   * of the screen brings it under the thumb, centred where the finger landed (MatchScene decides:
+   * a press on the active snail aims instead).
    */
   private placeStick(W: number, Hh: number, show: boolean): void {
     this.stickBase.setVisible(show);
@@ -439,24 +442,31 @@ export class HudScene extends Phaser.Scene {
     s.w = W;
     s.h = Hh;
     if (s.id < 0) this.restStick();
-    const zone = this.add
-      .zone(0, Hh * (1 - STICK_AREA.h), W * STICK_AREA.w, Hh * STICK_AREA.h)
-      .setOrigin(0, 0)
-      .setInteractive();
-    zone.on('pointerdown', (p: Phaser.Input.Pointer, _x: number, _y: number, e: StoppableEvent) => {
-      // A mouse click here is aiming, not the stick: let it through to the slingshot.
-      if (!p.wasTouch && !this.forceTouch) return;
-      e.stopPropagation();
-      s.id = p.id;
-      // Centre the stick under the finger, keeping the whole ring on screen.
-      const pt = this.cameras.main.getWorldPoint(p.x, p.y);
-      s.cx = Phaser.Math.Clamp(pt.x, STICK_R + 8, s.w - STICK_R - 8);
-      s.cy = Phaser.Math.Clamp(pt.y, STICK_R + 8, s.h - STICK_R - 8);
-      this.stickBase.setPosition(s.cx, s.cy).setAlpha(1);
-      this.stickKnob.setAlpha(1);
-      this.dragStick(p);
-    });
-    this.zones.push(zone);
+  }
+
+  /** Whether this press landed on a HUD button: it is the HUD's, not the game's. */
+  owns(p: Phaser.Input.Pointer): boolean {
+    return this.input.hitTestPointer(p).length > 0;
+  }
+
+  /** Whether this press is a finger in the stick's area (a mouse there aims). */
+  stickCanTake(p: Phaser.Input.Pointer): boolean {
+    if (!this.stickBase.visible || this.stick.id >= 0) return false;
+    if (!p.wasTouch && !this.forceTouch) return false;
+    const pt = this.cameras.main.getWorldPoint(p.x, p.y);
+    return pt.x < this.stick.w * STICK_AREA.w && pt.y > this.stick.h * (1 - STICK_AREA.h);
+  }
+
+  /** Brings the stick under this finger, keeping the whole ring on screen. */
+  grabStick(p: Phaser.Input.Pointer): void {
+    const s = this.stick;
+    s.id = p.id;
+    const pt = this.cameras.main.getWorldPoint(p.x, p.y);
+    s.cx = Phaser.Math.Clamp(pt.x, STICK_R + 8, s.w - STICK_R - 8);
+    s.cy = Phaser.Math.Clamp(pt.y, STICK_R + 8, s.h - STICK_R - 8);
+    this.stickBase.setPosition(s.cx, s.cy).setAlpha(1);
+    this.stickKnob.setAlpha(1);
+    this.dragStick(p);
   }
 
   /** Back to the corner, dimmed: a hint of where the stick is. */

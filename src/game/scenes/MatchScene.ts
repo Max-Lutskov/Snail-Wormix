@@ -62,6 +62,7 @@ import {
   HUD_RESTART,
   HUD_SELECT_WEAPON,
   HUD_STATE,
+  type HudScene,
   type HudState,
 } from './HudScene';
 
@@ -76,6 +77,8 @@ const CAMERA_LERP = 0.08;
  * back to the snail at RETURN_LERP (gentler than the usual follow).
  */
 const IMPACT_HOLD_MS = 900;
+/** A press this close to the active snail (CSS px) aims, even in the stick's corner. */
+const ON_SNAIL_CSS = 60;
 const RETURN_LERP = 0.05;
 const RETURN_MS = 700;
 const SOIL_TILE_KEY = 'soil-tile';
@@ -218,6 +221,7 @@ export class MatchScene extends Phaser.Scene {
         this.act({ fire: toVector(aim) });
       },
     );
+    this.input.on('pointerdown', this.press);
     this.menu = new Menu(this.mapChoices(), (mode, choice, level) => {
       this.pick(mode, choice, level);
     });
@@ -533,6 +537,33 @@ export class MatchScene extends Phaser.Scene {
     this.slingshot.cancel();
     this.hudJson = '';
     this.menu.show();
+  }
+
+  /**
+   * Routes a press: HUD buttons keep theirs; a press on the active snail always aims; a finger
+   * in the stick's corner takes the stick; anything else aims.
+   */
+  private readonly press = (p: Phaser.Input.Pointer): void => {
+    const hud = this.scene.get('HudScene') as HudScene;
+    if (hud.owns(p)) return;
+    if (this.slingshot.active || (this.canAim() && this.onActiveSnail(p))) {
+      this.slingshot.begin(p);
+      return;
+    }
+    if (hud.stickCanTake(p)) hud.grabStick(p);
+    else this.slingshot.begin(p);
+  };
+
+  /** Whether a press is on (or right next to) the active snail on screen. */
+  private onActiveSnail(p: Phaser.Input.Pointer): boolean {
+    const s = this.match.snails[this.match.active];
+    if (!s) return false;
+    const camera = this.cameras.main;
+    const pt = camera.getWorldPoint(p.x, p.y);
+    const css = this.game.canvas.getBoundingClientRect().width;
+    const cssPerWorld = css > 0 ? (camera.zoom * css) / this.scale.width : camera.zoom;
+    const d = Math.hypot(pt.x - s.x, pt.y - (s.y - SNAIL.height / 2)) * cssPerWorld;
+    return d < ON_SNAIL_CSS;
   }
 
   private canAim(): boolean {

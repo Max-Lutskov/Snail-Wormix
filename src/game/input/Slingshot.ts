@@ -39,6 +39,8 @@ export interface Aim {
  */
 export class Slingshot {
   private start: { x: number; y: number } | null = null;
+  /** The finger (or mouse) pulling the band; other pointers are ignored meanwhile. */
+  private pointerId = -1;
   private aim: Aim | null = null;
   private readonly g: Phaser.GameObjects.Graphics;
 
@@ -52,7 +54,6 @@ export class Slingshot {
     private readonly onFire: (aim: Aim) => void,
   ) {
     this.g = scene.add.graphics().setDepth(DEPTH);
-    scene.input.on('pointerdown', this.down);
     scene.input.on('pointermove', this.move);
     scene.input.on('pointerup', this.up);
     scene.input.on('pointerupoutside', this.up);
@@ -69,14 +70,21 @@ export class Slingshot {
     return css > 0 ? this.scene.scale.width / css : 1;
   }
 
-  private readonly down = (p: Phaser.Input.Pointer): void => {
-    if (!this.canAim()) return;
+  /** Whether a band is being pulled. */
+  get active(): boolean {
+    return this.start !== null;
+  }
+
+  /** Starts a pull from this press (the scene routes presses: HUD buttons and the stick first). */
+  begin(p: Phaser.Input.Pointer): void {
+    if (this.start || !this.canAim()) return;
     this.start = { x: p.x, y: p.y };
+    this.pointerId = p.id;
     this.aim = null;
-  };
+  }
 
   private readonly move = (p: Phaser.Input.Pointer): void => {
-    if (!this.start) return;
+    if (!this.start || p.id !== this.pointerId) return;
     if (!this.canAim()) {
       this.cancel();
       return;
@@ -92,7 +100,8 @@ export class Slingshot {
         : { angle: Math.atan2(dy, dx), power: Math.min(1, len / FULL_PULL_CSS) };
   };
 
-  private readonly up = (): void => {
+  private readonly up = (p: Phaser.Input.Pointer): void => {
+    if (!this.start || p.id !== this.pointerId) return;
     const aim = this.aim;
     this.cancel();
     if (aim && this.canAim()) this.onFire(aim);
@@ -100,6 +109,7 @@ export class Slingshot {
 
   cancel(): void {
     this.start = null;
+    this.pointerId = -1;
     this.aim = null;
     this.g.clear();
   }
@@ -179,7 +189,6 @@ export class Slingshot {
   }
 
   destroy(): void {
-    this.scene.input.off('pointerdown', this.down);
     this.scene.input.off('pointermove', this.move);
     this.scene.input.off('pointerup', this.up);
     this.scene.input.off('pointerupoutside', this.up);
