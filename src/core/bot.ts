@@ -8,6 +8,10 @@
  * crawls left and right with the snail physics, skips those that drop it off a ledge, and
  * picks the spot whose best shot is the most forgiving (still lands near the target when
  * slightly off). After shooting it crawls away from the enemy if that is safe (planRetreat).
+ * "Safe" includes not standing where a blast next to it would throw it into the water
+ * (inDanger, simulated with the real knockback). When it has no shot at the enemy (behind
+ * or under terrain), it bores a way with the dandelion drill: it tries drill shots in every
+ * direction on a copy of the terrain and keeps the one that opens the best next shot.
  *
  * Pure and seeded like the rest of core: the same state and RNG give the same decision.
  */
@@ -15,7 +19,8 @@
 import { canHide, type MatchState } from './match';
 import { launch, stepProjectile, type Aim, type ShotWorld } from './projectile';
 import { nextFloat, type RngState } from './rng';
-import { SNAIL, stepSnail, type Snail, type SnailWorld } from './snail/snail';
+import { applyExplosion, SNAIL, stepSnail, type Snail, type SnailWorld } from './snail/snail';
+import { carveCircle, cloneMask } from './terrain/mask';
 import type { TerrainLayout } from './terrain/layout';
 import { DAMAGE_REACH, WEAPONS, type WeaponId } from './weapons';
 
@@ -41,6 +46,10 @@ const HIDE_CHANCE = 0.35;
  */
 const MOVE_SLACK = 20;
 const MOVE_CHANCE = 0.6;
+/** A dangerous spot costs this much more (px of expected miss) when choosing where to be. */
+const DANGER_COST = 300;
+/** With no shot landing nearer than this to the enemy, the bot considers the drill. */
+const DRILL_WHEN = 55;
 /** A flight longer than this many ticks counts as lost. */
 const MAX_FLIGHT = 600;
 
@@ -137,6 +146,23 @@ function usableWeapons(state: MatchState, team: number): WeaponId[] {
   });
 }
 
+/**
+ * Whether a blast right beside the snail (a pea or an acorn landing on either side) would
+ * throw it into the water: simulated with the real knockback and snail physics.
+ */
+export function inDanger(me: Snail, world: SnailWorld): boolean {
+  for (const r of [WEAPONS.pea.craterRadius, WEAPONS.acorn.craterRadius]) {
+    for (const side of [-1, 1]) {
+      let s = applyExplosion(me, { x: me.x + side * 24, y: me.y - SNAIL.height / 2, r });
+      for (let t = 0; t < 400 && s.alive && !s.grounded; t++) {
+        s = stepSnail(s, { move: 0, jump: false }, world);
+      }
+      if (!s.alive) return true;
+    }
+  }
+  return false;
+}
+
 /** A crawl the bot can make: direction and how many ticks to hold it. */
 export interface Crawl {
   readonly dir: -1 | 1;
@@ -206,7 +232,8 @@ export function planPosition(
     r = n.state;
     return n.value * 12;
   };
-  const stay = shotQuality(me, target, weapons, shotWorld) + jitter();
+  const danger = (s: Snail): number => (inDanger(s, walkWorld) ? DANGER_COST : 0);
+  const stay = shotQuality(me, target, weapons, shotWorld) + danger(me) + jitter();
   let move: { crawl: Crawl; cost: number } | null = null;
   for (const dir of [-1, 1] as const) {
     for (const ticks of [40, 80, 130]) {
@@ -214,7 +241,8 @@ export function planPosition(
       const at = crawlTo(me, crawl, walkWorld);
       if (!at) continue;
       const snails = state.snails.map((s) => (s.id === me.id ? at : s));
-      const cost = shotQuality(at, target, weapons, { ...shotWorld, snails }) + jitter();
+      const cost =
+        shotQuality(at, target, weapons, { ...shotWorld, snails }) + danger(at) + jitter();
       if (!move || cost < move.cost) move = { crawl, cost };
     }
   }
@@ -239,11 +267,88 @@ export function planRetreat(
   const n = nextFloat(rng);
   const away: -1 | 1 = me.x >= enemy.x ? 1 : -1;
   const world: SnailWorld = { mask: layout.mask, waterLevel: layout.waterLevel };
-  for (const ticks of [Math.round(70 + n.value * 50), 40]) {
-    const crawl = { dir: away, ticks };
-    if (crawlTo(me, crawl, world)) return { crawl, rng: n.state };
+  // Away from the enemy, but never to a spot where one blast throws it into the water (like
+  // the edge of the map); if it already stands in such a spot, toward safer ground.
+  const long = Math.round(70 + n.value * 50);
+  const options: Crawl[] = [
+    { dir: away, ticks: long },
+    { dir: away, ticks: 40 },
+    { dir: -away as -1 | 1, ticks: 60 },
+    { dir: -away as -1 | 1, ticks: 110 },
+  ];
+  const here = inDanger(me, world);
+  for (const crawl of options) {
+    if (!here && crawl.dir !== away) break;
+    const at = crawlTo(me, crawl, world);
+    if (at && !inDanger(at, world)) return { crawl, rng: n.state };
   }
   return { crawl: null, rng: n.state };
+}
+
+/** The tunnel a drill shot would bore: its carve points (empty if it never hits ground). */
+function tunnel(
+  me: Snail,
+  angle: number,
+  power: number,
+  world: ShotWorld,
+): { x: number; y: number }[] {
+  let p = launch(me, 'dandelion', { x: Math.cos(angle) * power, y: Math.sin(angle) * power });
+  const cuts: { x: number; y: number }[] = [];
+  for (let t = 0; t < MAX_FLIGHT; t++) {
+    const step = stepProjectile(p, world);
+    if (step.kind !== 'flying') break;
+    if (step.carve) cuts.push(step.carve);
+    p = step.projectile;
+  }
+  return cuts;
+}
+
+/**
+ * The drill shot that best opens the way to `target`: drill shots in every direction (down
+ * too), the few whose tunnels pass nearest the target bored into a copy of the terrain, and
+ * the one after which the next shot lands nearest wins, if it beats `current` clearly.
+ */
+function bestDrill(
+  me: Snail,
+  target: { x: number; y: number },
+  weapons: readonly WeaponId[],
+  world: ShotWorld,
+  layout: TerrainLayout,
+  current: number,
+): Candidate | null {
+  const r = WEAPONS.dandelion.craterRadius;
+  const tries: { angle: number; power: number; cuts: { x: number; y: number }[]; near: number }[] =
+    [];
+  for (let angle = -Math.PI; angle < Math.PI; angle += 0.1) {
+    for (const power of [0.2, 0.4, 0.6, 0.8, 1]) {
+      const cuts = tunnel(me, angle, power, world);
+      if (cuts.length === 0) continue;
+      const near = Math.min(...cuts.map((c) => Math.hypot(c.x - target.x, c.y - target.y)));
+      tries.push({ angle, power, cuts, near });
+    }
+  }
+  tries.sort((a, b) => a.near - b.near);
+  let best: Candidate | null = null;
+  for (const t of tries.slice(0, 6)) {
+    const mask = cloneMask(layout.mask);
+    for (const c of t.cuts) carveCircle(mask, c.x, c.y, r);
+    const next = bestShot(
+      me,
+      target,
+      weapons,
+      { ...world, mask },
+      {
+        angle: 0.07,
+        power: 0.1,
+        refine: false,
+      },
+    );
+    const score = next?.score ?? Number.POSITIVE_INFINITY;
+    if (score < current - 20 && (!best || score < best.score)) {
+      best = { weapon: 'dandelion', angle: t.angle, power: t.power, score };
+    }
+  }
+  return best;
 }
 
 /** The bot's move for the active snail of `state` (which must be the bot's). */
@@ -282,7 +387,13 @@ export function planMove(
     power: 0.7,
     score: Number.POSITIVE_INFINITY,
   };
-  const pick = best ?? fallback;
+  let pick = best ?? fallback;
+  // No shot reaches the enemy (it hides behind or under terrain): bore a way with the drill.
+  const drills = ammo?.dandelion;
+  if (target && pick.score > DRILL_WHEN && (drills === null || (drills ?? 0) > 0)) {
+    const drill = bestDrill(me, target, weapons, world, layout, pick.score);
+    if (drill) pick = drill;
+  }
   const skill = BOT_SKILL[level];
   r = nextFloat(r.state);
   const angle = pick.angle + (r.value * 2 - 1) * skill.angle;

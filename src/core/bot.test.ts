@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { planMove, planPosition, planRetreat } from './bot';
+import { inDanger, planMove, planPosition, planRetreat } from './bot';
 import { createMatch, NO_INPUT, stepMatch, type MatchEvent, type MatchState } from './match';
 import { seedRng } from './rng';
 import type { TerrainLayout } from './terrain/layout';
+import { createMask, type TerrainMask } from './terrain/mask';
+import { spawnSnail } from './snail/snail';
 import { buildTerrain, createTerrainState } from './terrain/state';
 
 /** A match on hills, past the intro, with the bot (team 1) to move. */
@@ -91,5 +93,44 @@ describe('bot', () => {
     const me = state.snails[1];
     const enemy = state.snails[0];
     if (crawl && me && enemy) expect(crawl.dir).toBe(me.x >= enemy.x ? 1 : -1);
+  });
+
+  it('knows a spot by the edge over the water is dangerous, and the middle is not', () => {
+    // A 600 px wide plateau ending in a cliff over the water.
+    const mask = createMask(1000, 500);
+    for (let y = 300; y < 500; y++) mask.data.fill(1, y * 1000 + 100, y * 1000 + 700);
+    const world = { mask, waterLevel: 480 };
+    expect(inDanger(spawnSnail(0, 1, 690, world), world)).toBe(true);
+    expect(inDanger(spawnSnail(0, 1, 400, world), world)).toBe(false);
+  });
+
+  it('bores toward an enemy hiding under a thick roof with the drill', () => {
+    const mask = createMask(900, 400);
+    const fill = (m: TerrainMask, x0: number, y0: number, x1: number, y1: number): void => {
+      for (let y = y0; y < y1; y++) m.data.fill(1, y * m.width + x0, y * m.width + x1);
+    };
+    fill(mask, 0, 320, 900, 400); // the floor
+    fill(mask, 380, 150, 760, 250); // a thick roof over the enemy's closed cave
+    fill(mask, 380, 250, 400, 320); // cave walls
+    fill(mask, 740, 250, 760, 320);
+    const layout: TerrainLayout = {
+      mask,
+      waterLevel: 395,
+      spawns: [{ x: 560 }, { x: 120 }],
+      decor: [],
+      mossBumps: [],
+      decorPixels: [],
+      decorAlive: new Uint8Array(0),
+    };
+    const terrain = createTerrainState({ kind: 'hills', seed: 1 });
+    let state = { ...createMatch(terrain, layout, 1), active: 1 };
+    // The enemy starts on the roof; put it in the cave below.
+    state = {
+      ...state,
+      snails: state.snails.map((s, i) => (i === 0 ? { ...s, y: 320 } : s)),
+    };
+    while (state.phase === 'intro') state = stepMatch(state, NO_INPUT, layout).state;
+    const { move } = planMove(state, layout, 'hard', seedRng(3));
+    expect(move).toMatchObject({ kind: 'shoot', weapon: 'dandelion' });
   });
 });
