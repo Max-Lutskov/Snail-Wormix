@@ -76,6 +76,9 @@ const CARD = { w: 230, h: 50 } as const;
 const SLOT = tokens.hud.minButtonPx;
 /** Thumb stick: ring and knob radii, the sideways dead zone and the push up that jumps. */
 const STICK_R = 50;
+/** Where a touch brings the stick: this share of the screen's width and height, bottom right. */
+const STICK_AREA = { w: 0.4, h: 0.55 } as const;
+const STICK_REST_ALPHA = 0.5;
 const STICK_KNOB = 22;
 const STICK_DEAD = 14;
 const STICK_JUMP = 30;
@@ -109,8 +112,14 @@ export class HudScene extends Phaser.Scene {
   private readonly stick = {
     /** The pointer dragging it, or -1. */
     id: -1,
+    /** The centre it is pulled from: under the finger while dragged, at rest otherwise. */
     cx: 0,
     cy: 0,
+    /** Where it waits (bottom right), and the screen size it may move within. */
+    restX: 0,
+    restY: 0,
+    w: 0,
+    h: 0,
     move: 0 as -1 | 0 | 1,
     /** A push up jumps once; it re-arms when the knob comes back down. */
     jumpArmed: true,
@@ -392,7 +401,11 @@ export class HudScene extends Phaser.Scene {
     k.lineStyle(2.5, OUTLINE, 1).strokeCircle(0, 0, STICK_KNOB);
   }
 
-  /** Puts the stick bottom right (or hides it) and its touch area over it. */
+  /**
+   * A floating stick: it waits dimmed in the bottom-right corner, and a touch anywhere in the
+   * lower right of the screen brings it under the thumb, centred where the finger landed (the
+   * slingshot can't start there; aim from anywhere else).
+   */
   private placeStick(W: number, Hh: number, show: boolean): void {
     this.stickBase.setVisible(show);
     this.stickKnob.setVisible(show);
@@ -401,22 +414,36 @@ export class HudScene extends Phaser.Scene {
       return;
     }
     const s = this.stick;
-    s.cx = W - INSET - 24 - STICK_R;
-    s.cy = Hh - INSET - 24 - STICK_R;
-    this.stickBase.setPosition(s.cx, s.cy);
-    if (s.id < 0) this.stickKnob.setPosition(s.cx, s.cy);
-    // A touch area a bit bigger than the ring, so a thumb finds it.
-    const r = STICK_R + 26;
+    s.restX = W - INSET - 24 - STICK_R;
+    s.restY = Hh - INSET - 24 - STICK_R;
+    s.w = W;
+    s.h = Hh;
+    if (s.id < 0) this.restStick();
     const zone = this.add
-      .zone(s.cx - r, s.cy - r, 2 * r, 2 * r)
+      .zone(W * (1 - STICK_AREA.w), Hh * (1 - STICK_AREA.h), W * STICK_AREA.w, Hh * STICK_AREA.h)
       .setOrigin(0, 0)
       .setInteractive();
     zone.on('pointerdown', (p: Phaser.Input.Pointer, _x: number, _y: number, e: StoppableEvent) => {
       e.stopPropagation();
       s.id = p.id;
+      // Centre the stick under the finger, keeping the whole ring on screen.
+      const pt = this.cameras.main.getWorldPoint(p.x, p.y);
+      s.cx = Phaser.Math.Clamp(pt.x, STICK_R + 8, s.w - STICK_R - 8);
+      s.cy = Phaser.Math.Clamp(pt.y, STICK_R + 8, s.h - STICK_R - 8);
+      this.stickBase.setPosition(s.cx, s.cy).setAlpha(1);
+      this.stickKnob.setAlpha(1);
       this.dragStick(p);
     });
     this.zones.push(zone);
+  }
+
+  /** Back to the corner, dimmed: a hint of where the stick is. */
+  private restStick(): void {
+    const s = this.stick;
+    s.cx = s.restX;
+    s.cy = s.restY;
+    this.stickBase.setPosition(s.cx, s.cy).setAlpha(STICK_REST_ALPHA);
+    this.stickKnob.setPosition(s.cx, s.cy).setAlpha(STICK_REST_ALPHA);
   }
 
   /** Moves the knob with the finger: sideways past a dead zone crawls, up past a mark jumps. */
@@ -448,7 +475,7 @@ export class HudScene extends Phaser.Scene {
     const s = this.stick;
     s.id = -1;
     s.jumpArmed = true;
-    this.stickKnob.setPosition(s.cx, s.cy);
+    this.restStick();
     if (s.move !== 0) {
       s.move = 0;
       this.game.events.emit(HUD_MOVE, 0);
