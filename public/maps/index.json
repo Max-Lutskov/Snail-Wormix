@@ -10,11 +10,6 @@
     "grass": true
   },
   {
-    "id": "garden",
-    "back": false,
-    "grass": true
-  },
-  {
     "id": "glade",
     "back": true,
     "grass": false

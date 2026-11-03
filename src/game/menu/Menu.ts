@@ -10,8 +10,7 @@ import { tokens } from '../art/tokens';
 export type GameMode = 'local' | 'bot' | 'online';
 
 export interface MapChoice {
-  /** What to load; hills get a fresh seed when picked. */
-  readonly source: TerrainSource | 'hills';
+  readonly source: TerrainSource;
   readonly name: string;
   readonly thumb: HTMLCanvasElement;
 }
@@ -54,11 +53,7 @@ export class Menu {
 
   constructor(
     private readonly maps: readonly MapChoice[],
-    private readonly onPick: (
-      mode: GameMode,
-      source: TerrainSource | 'hills',
-      level: BotLevel,
-    ) => void,
+    private readonly onPick: (mode: GameMode, source: TerrainSource, level: BotLevel) => void,
   ) {
     if (!document.getElementById('menu-css')) {
       const style = document.createElement('style');

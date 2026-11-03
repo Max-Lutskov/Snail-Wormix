@@ -16,7 +16,7 @@ export type ClientInput = Partial<Omit<MatchInput, 'move'>> & {
 };
 
 export type ClientMessage =
-  /** Creates a room for a match on `source` (a drawn map, or hills from a seed). */
+  /** Creates a room for a match on `source` (a drawn map). */
   | { readonly t: 'create'; readonly source: TerrainSource }
   | { readonly t: 'join'; readonly room: string }
   | { readonly t: 'input'; readonly input: ClientInput }
@@ -51,14 +51,9 @@ export const NET_TICK_RATE = 60;
 export const NET_BATCH = 1;
 /** The server sends a checksum every this many ticks. */
 export const NET_CHECKSUM_EVERY = 60;
-/**
- * Whether a client-sent terrain source can be played: a drawn map the server has, or hills
- * from an integer seed (generated with exact arithmetic only, so the same everywhere).
- */
+/** Whether a client-sent terrain source can be played: a drawn map the server has. */
 export function validSource(source: unknown, hasMap: (id: string) => boolean): boolean {
   if (typeof source !== 'object' || source === null) return false;
   const s = source as Record<string, unknown>;
-  if (s['kind'] === 'map') return typeof s['id'] === 'string' && hasMap(s['id']);
-  const seed = s['seed'];
-  return s['kind'] === 'hills' && typeof seed === 'number' && Number.isInteger(seed) && seed >= 0;
+  return s['kind'] === 'map' && typeof s['id'] === 'string' && hasMap(s['id']);
 }

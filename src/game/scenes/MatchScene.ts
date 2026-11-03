@@ -43,7 +43,7 @@ import { Slingshot, toVector } from '../input/Slingshot';
 import { mapLookup, preloadMaps, readMaps, type LoadedMap } from '../maps/maps';
 import { Online } from '../net/Online';
 import { Menu, type GameMode, type MapChoice } from '../menu/Menu';
-import { hillsThumbnail, mapThumbnail } from '../menu/thumbs';
+import { mapThumbnail } from '../menu/thumbs';
 import { DecorView, MUSHROOM_SVG_SCALE, MUSHROOM_TEXTURE } from '../terrain/DecorView';
 import { paintGardenArt, type SoilTile } from '../terrain/terrainArt';
 import { paintHillsGrass } from '../terrain/grassArt';
@@ -79,6 +79,8 @@ const CAMERA_MARGIN = 0;
 /** Grass fringe: over the ground, under its decor (so mushrooms aren't buried). */
 const GRASS_DEPTH = 0.4;
 const TEAM_NAMES = ['Зелені', 'Червоні'] as const;
+/** The map shown behind the menu, and the default without ?map=. */
+const MENU_MAP = 'glade';
 const WIND_KEY = 'leaf-wind';
 const WEAPON_KEYS = ['ONE', 'TWO', 'THREE', 'FOUR'] as const;
 
@@ -103,7 +105,7 @@ const NET_CATCH_UP = 8;
  * by link (?room=CODE): then the server's confirmed inputs drive the match and each player
  * controls only their own team.
  * ←/→ or A/D = crawl, W/↑/space = jump, drag anywhere and release = slingshot shot,
- * 1/2/3 = weapon, Enter = new match when over, R = new generated hills, M = next drawn map.
+ * 1/2/3 = weapon, Enter = new match when over, M = next map (development).
  */
 export class MatchScene extends Phaser.Scene {
   private match!: MatchState;
@@ -281,11 +283,6 @@ export class MatchScene extends Phaser.Scene {
       keyboard.on('keydown-ENTER', restart);
       keyboard.on('keydown-H', hide);
       keyboard.on('keydown-Z', toggleOverview);
-      keyboard.on('keydown-R', () => {
-        if (!this.online && !this.menu.open) {
-          this.loadTerrain({ kind: 'hills', seed: Math.floor(Math.random() * 1_000_000) });
-        }
-      });
       keyboard.on('keydown-M', () => {
         if (!this.online && !this.menu.open) this.loadTerrain(this.nextSource());
       });
@@ -477,20 +474,18 @@ export class MatchScene extends Phaser.Scene {
     });
   }
 
-  /** Every drawn map with its preview, then generated hills. */
+  /** Every drawn map with its preview. */
   private mapChoices(): MapChoice[] {
     const drawn = [...this.maps.entries()].map(([id, m]) => ({
       source: { kind: 'map', id } as const,
       name: m.data.meta.name,
       thumb: mapThumbnail(this, m.terrainKey, m.backKey),
     }));
-    return [...drawn, { source: 'hills', name: 'Пагорби (випадкові)', thumb: hillsThumbnail(1) }];
+    return drawn;
   }
 
   /** A choice from the menu: on one device, against the bot, or a room to invite a friend. */
-  private pick(mode: GameMode, choice: TerrainSource | 'hills', level: BotLevel): void {
-    const source: TerrainSource =
-      choice === 'hills' ? { kind: 'hills', seed: Math.floor(Math.random() * 1_000_000) } : choice;
+  private pick(mode: GameMode, source: TerrainSource, level: BotLevel): void {
     this.overview = false;
     this.fitCamera();
     this.bot =
@@ -767,16 +762,18 @@ export class MatchScene extends Phaser.Scene {
   /** Hills, or a drawn map picked with ?map=<id> in the URL (e.g. ?map=bridge). */
   private startSource(): TerrainSource {
     const id = new URLSearchParams(window.location.search).get('map');
-    return id !== null && this.maps.has(id) ? { kind: 'map', id } : { kind: 'hills', seed: 1 };
+    const first = this.maps.has(MENU_MAP) ? MENU_MAP : [...this.maps.keys()][0];
+    const pick = id !== null && this.maps.has(id) ? id : first;
+    return pick === undefined ? { kind: 'hills', seed: 1 } : { kind: 'map', id: pick };
   }
 
-  /** Cycles hills → each drawn map → hills. */
+  /** Cycles through the drawn maps. */
   private nextSource(): TerrainSource {
     const ids = [...this.maps.keys()];
     const current = this.match.terrain.source;
     const at = current.kind === 'map' ? ids.indexOf(current.id) : -1;
     const next = ids[at + 1];
-    return next === undefined ? { kind: 'hills', seed: 1 } : { kind: 'map', id: next };
+    return { kind: 'map', id: next ?? ids[0] ?? MENU_MAP };
   }
 
   /** Loads the terrain and starts a new match on it (with `seed`, or a random one). */
@@ -864,7 +861,7 @@ export class MatchScene extends Phaser.Scene {
     this.registry.set(
       DEBUG_INFO,
       `${where} · craters ${craters.length} · mask ${hash}${this.netInfo()}\n` +
-        'A/D: crawl · W/space: jump · drag+release: shoot · 1/2/3: weapon · H: hide · R: hills · M: map',
+        'A/D: crawl · W/space: jump · drag+release: shoot · 1/2/3: weapon · H: hide · M: map',
     );
   }
 }

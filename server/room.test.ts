@@ -91,8 +91,8 @@ describe('room', () => {
     expect(a.match?.turn).toBeGreaterThan(1);
   });
 
-  it('plays generated hills too, in step on both clients', () => {
-    const r = room({ kind: 'hills', seed: 77 });
+  it('plays the chosen map, in step on both clients', () => {
+    const r = room({ kind: 'map', id: 'island' });
     const a = new FakeClient();
     const b = new FakeClient();
     r.join(a);
@@ -100,7 +100,7 @@ describe('room', () => {
     for (let i = 0; i < 200; i++) r.step();
     expect(a.sums.length).toBeGreaterThan(2);
     for (const [, server, client] of a.sums) expect(client).toBe(server);
-    expect(a.match?.terrain.source).toEqual({ kind: 'hills', seed: 77 });
+    expect(a.match?.terrain.source).toEqual({ kind: 'map', id: 'island' });
   });
 
   it('sends the running state to a player who rejoins', () => {
