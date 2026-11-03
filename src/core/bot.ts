@@ -12,6 +12,9 @@
  * (inDanger, simulated with the real knockback). When it has no shot at the enemy (behind
  * or under terrain), it bores a way with the dandelion drill: it tries drill shots in every
  * direction on a copy of the terrain and keeps the one that opens the best next shot.
+ * Standing in a dangerous spot it can't crawl out of, it digs itself a trench (a drill shot
+ * down at its feet, checked on a copy of the terrain to leave it alive, safe and able to
+ * shoot), or hides in its shell if that keeps it from being thrown into the water.
  *
  * Pure and seeded like the rest of core: the same state and RNG give the same decision.
  */
@@ -177,7 +180,7 @@ function crawlTo(me: Snail, crawl: Crawl, world: SnailWorld): Snail | null {
   let s = me;
   for (let t = 0; t < crawl.ticks; t++) {
     s = stepSnail(s, { move: crawl.dir, jump: false }, world);
-    if (!s.alive || !s.grounded || Math.abs(s.y - me.y) > 40) return null;
+    if (!s.alive || !s.grounded) return null;
   }
   return Math.abs(s.x - me.x) < 4 ? null : s;
 }
@@ -236,7 +239,8 @@ export function planPosition(
   const stay = shotQuality(me, target, weapons, shotWorld) + danger(me) + jitter();
   let move: { crawl: Crawl; cost: number } | null = null;
   for (const dir of [-1, 1] as const) {
-    for (const ticks of [40, 80, 130]) {
+    // Up to ~3 s of crawling: far enough to get off an edge, or round behind the enemy.
+    for (const ticks of [40, 80, 130, 200, 280]) {
       const crawl = { dir, ticks };
       const at = crawlTo(me, crawl, walkWorld);
       if (!at) continue;
@@ -351,6 +355,59 @@ function bestDrill(
   return best;
 }
 
+/** Where the snail comes to rest from (me) on `world`, or null if it dies on the way. */
+function settle(me: Snail, world: SnailWorld): Snail | null {
+  let s: Snail = { ...me, grounded: false, vx: 0, vy: 0 };
+  for (let t = 0; t < 400 && s.alive && !s.grounded; t++) {
+    s = stepSnail(s, { move: 0, jump: false }, world);
+  }
+  return s.alive && s.grounded ? s : null;
+}
+
+/**
+ * A trench for a snail in a dangerous spot: a weak drill shot down at its feet (straight, or
+ * slanting either way). Each is bored into a copy of the terrain; the snail must come to rest
+ * alive, no more than a jump deep, out of danger, and still have a shot at the enemy. The one
+ * with the best next shot wins.
+ */
+function bestTrench(
+  me: Snail,
+  target: { x: number; y: number },
+  weapons: readonly WeaponId[],
+  world: ShotWorld,
+  layout: TerrainLayout,
+): Candidate | null {
+  const r = WEAPONS.dandelion.craterRadius;
+  let best: Candidate | null = null;
+  for (const angle of [Math.PI / 2, Math.PI / 2 - 0.5, Math.PI / 2 + 0.5, 0.7, Math.PI - 0.7]) {
+    const power = 0.12;
+    const cuts = tunnel(me, angle, power, world);
+    if (cuts.length === 0) continue;
+    const mask = cloneMask(layout.mask);
+    for (const c of cuts) carveCircle(mask, c.x, c.y, r);
+    const dug: SnailWorld = { mask, waterLevel: world.waterLevel };
+    const at = settle(me, dug);
+    if (!at || at.y - me.y > SNAIL.jumpUp * 10 || inDanger(at, dug)) continue;
+    const snails = world.snails.map((s) => (s.id === me.id ? at : s));
+    const next = bestShot(
+      at,
+      target,
+      weapons,
+      { ...world, mask, snails },
+      {
+        angle: 0.07,
+        power: 0.1,
+        refine: false,
+      },
+    );
+    const score = next?.score ?? Number.POSITIVE_INFINITY;
+    if (score < 150 && (!best || score < best.score)) {
+      best = { weapon: 'dandelion', angle, power, score };
+    }
+  }
+  return best;
+}
+
 /** The bot's move for the active snail of `state` (which must be the bot's). */
 export function planMove(
   state: MatchState,
@@ -363,6 +420,39 @@ export function planMove(
   let r = nextFloat(rng);
   if (me.hp <= HIDE_HP && canHide(state) && r.value < HIDE_CHANCE) {
     return { move: { kind: 'hide' }, rng: r.state };
+  }
+  // In a spot where one blast throws it into the water: dig in, or hide in the shell.
+  const walkWorld: SnailWorld = { mask: layout.mask, waterLevel: layout.waterLevel };
+  if (inDanger(me, walkWorld)) {
+    const enemy = nearestEnemy(state, me);
+    const left = state.ammo[me.team]?.dandelion;
+    const trench =
+      enemy && (left === null || (left ?? 0) > 0)
+        ? bestTrench(
+            me,
+            center(enemy),
+            usableWeapons(state, me.team),
+            { ...walkWorld, wind: state.wind, snails: state.snails },
+            layout,
+          )
+        : null;
+    const round = (v: number): number => Math.round(v * 1e4) / 1e4;
+    if (trench) {
+      return {
+        move: {
+          kind: 'shoot',
+          weapon: 'dandelion',
+          aim: {
+            x: round(Math.cos(trench.angle) * trench.power),
+            y: round(Math.sin(trench.angle) * trench.power),
+          },
+        },
+        rng: r.state,
+      };
+    }
+    if (canHide(state) && !inDanger({ ...me, shell: true }, walkWorld)) {
+      return { move: { kind: 'hide' }, rng: r.state };
+    }
   }
   const enemies = state.snails.filter((s) => s.alive && s.team !== me.team);
   const target = enemies

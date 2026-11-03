@@ -133,4 +133,56 @@ describe('bot', () => {
     const { move } = planMove(state, layout, 'hard', seedRng(3));
     expect(move).toMatchObject({ kind: 'shoot', weapon: 'dandelion' });
   });
+
+  /** A plateau ending in a cliff over the water, the bot (team 1) at `botX`, to move. */
+  function cliffMatch(botX: number): { state: MatchState; layout: TerrainLayout } {
+    const mask = createMask(1000, 500);
+    for (let y = 300; y < 500; y++) mask.data.fill(1, y * 1000 + 100, y * 1000 + 700);
+    const layout: TerrainLayout = {
+      mask,
+      waterLevel: 480,
+      spawns: [{ x: 250 }, { x: botX }],
+      decor: [],
+      mossBumps: [],
+      decorPixels: [],
+      decorAlive: new Uint8Array(0),
+    };
+    const terrain = createTerrainState({ kind: 'hills', seed: 1 });
+    let state: MatchState = { ...createMatch(terrain, layout, 1), active: 1 };
+    while (state.phase === 'intro') state = stepMatch(state, NO_INPUT, layout).state;
+    return { state, layout };
+  }
+
+  it('digs a trench (or hides) when one blast would throw it into the water', () => {
+    const { state, layout } = cliffMatch(640);
+    const world = { mask: layout.mask, waterLevel: layout.waterLevel };
+    const me = state.snails[1];
+    if (!me) throw new Error('no bot');
+    expect(inDanger(me, world)).toBe(true);
+
+    const { move } = planMove(state, layout, 'hard', seedRng(2));
+    if (move.kind === 'hide') return;
+    expect(move.weapon).toBe('dandelion');
+    expect(move.aim.y).toBeGreaterThan(0); // aimed down, at its feet
+    // Dig, let everything settle: the bot is alive, in its trench, and out of danger.
+    let s = stepMatch(state, { ...NO_INPUT, weapon: 'dandelion' }, layout).state;
+    s = stepMatch(s, { ...NO_INPUT, fire: move.aim }, layout).state;
+    for (let i = 0; i < 1500 && s.phase !== 'intro'; i++) s = stepMatch(s, NO_INPUT, layout).state;
+    const bot = s.snails[1];
+    expect(bot?.alive).toBe(true);
+    if (bot) expect(inDanger(bot, world)).toBe(false);
+  });
+
+  it('crawls inland from the very edge before shooting', () => {
+    const { state, layout } = cliffMatch(690);
+    const { crawl } = planPosition(state, layout, seedRng(1));
+    expect(crawl?.dir).toBe(-1);
+    let s = state;
+    for (let i = 0; i < (crawl?.ticks ?? 0); i++) {
+      s = stepMatch(s, { ...NO_INPUT, move: crawl?.dir ?? 0 }, layout).state;
+    }
+    const bot = s.snails[1];
+    if (bot)
+      expect(inDanger(bot, { mask: layout.mask, waterLevel: layout.waterLevel })).toBe(false);
+  });
 });
