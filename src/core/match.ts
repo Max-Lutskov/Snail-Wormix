@@ -32,7 +32,8 @@ import { DAMAGE_REACH, WEAPON_IDS, WEAPONS, type WeaponId } from './weapons';
 export const TURN = {
   introTicks: 75,
   aimTicks: 30 * 60,
-  retreatTicks: 3 * 60,
+  // Long enough to watch the impact (the camera lingers there ~1 s) and still crawl away.
+  retreatTicks: 4 * 60,
   /** Settling lasts at least this long, and at most settleMaxTicks even if a snail keeps moving. */
   settleMinTicks: 30,
   settleMaxTicks: 10 * 60,

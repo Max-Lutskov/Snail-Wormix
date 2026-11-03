@@ -70,6 +70,13 @@ const TICK_MS = 1000 / 60;
 const MAX_TICKS_PER_FRAME = 5;
 /** Camera follow smoothing (share of the distance per frame). */
 const CAMERA_LERP = 0.08;
+/**
+ * After an impact the camera stays on it this long (ms) so you see the result, then eases
+ * back to the snail at RETURN_LERP (gentler than the usual follow).
+ */
+const IMPACT_HOLD_MS = 900;
+const RETURN_LERP = 0.05;
+const RETURN_MS = 700;
 const SOIL_TILE_KEY = 'soil-tile';
 /**
  * How far past the world edges the camera may look. None: a drawn map's backdrop ends at the
@@ -130,6 +137,8 @@ export class MatchScene extends Phaser.Scene {
   /** Discrete inputs wait here until the next tick consumes them. */
   private queued: Omit<MatchInput, 'move'> = { jump: false, fire: null, weapon: null, hide: false };
   private hudJson = '';
+  /** An impact the camera lingers on: where, and until when (scene time, ms). */
+  private impact: { x: number; y: number; until: number } | null = null;
   /** Where the camera was when the current turn's intro began: it glides from here. */
   private glideFrom: { x: number; y: number } | null = null;
   /** Crawl direction held on the on-screen buttons. */
@@ -534,6 +543,7 @@ export class MatchScene extends Phaser.Scene {
   private onEvent(e: MatchEvent): void {
     switch (e.kind) {
       case 'explosion':
+        this.impact = { x: e.crater.x, y: e.crater.y, until: this.time.now + IMPACT_HOLD_MS };
         // Core has already carved the mask; the views catch up under the flash.
         playExplosion(this, e.crater, this.layout.mask, () => {
           this.view?.onCrater(e.crater);
@@ -543,6 +553,8 @@ export class MatchScene extends Phaser.Scene {
         });
         break;
       case 'dig':
+        // The camera rests where the drill stops boring.
+        this.impact = { x: e.crater.x, y: e.crater.y, until: this.time.now + IMPACT_HOLD_MS };
         // A drill boring: just the cut, a crater per tick, plus a puff of soil.
         this.view?.onCrater(e.crater);
         this.decor?.remove(e.removedDecor);
@@ -663,8 +675,15 @@ export class MatchScene extends Phaser.Scene {
       camera.centerOn(from.x + (target.x - from.x) * e, from.y + (target.y - from.y) * e);
       return;
     }
+    // Linger on a fresh impact, then ease back more gently than the usual follow.
+    const now = this.time.now;
+    const impact = this.impact;
+    const holding = !p && impact !== null && now < impact.until;
+    const aim = holding ? impact : target;
+    const returning = impact !== null && !holding && now < impact.until + RETURN_MS;
+    const k = returning ? RETURN_LERP : CAMERA_LERP;
     const { x, y } = camera.midPoint;
-    camera.centerOn(x + (target.x - x) * CAMERA_LERP, y + (target.y - y) * CAMERA_LERP);
+    camera.centerOn(x + (aim.x - x) * k, y + (aim.y - y) * k);
   }
 
   /** Sends the HUD what it shows, when it changed. */
