@@ -10,7 +10,7 @@ export const HUD_STATE = 'hudState';
 /** Game events the HUD emits for MatchScene. */
 export const HUD_SELECT_WEAPON = 'hud:selectWeapon';
 export const HUD_RESTART = 'hud:restart';
-/** Touch controls: the held crawl direction (-1, 0 or 1), and a jump tap. */
+/** Touch controls: the crawl direction held on the stick (-1, 0 or 1), and a jump. */
 export const HUD_MOVE = 'hud:move';
 export const HUD_JUMP = 'hud:jump';
 /** Hide in the shell instead of shooting. */
@@ -73,6 +73,11 @@ const FONT = 'Trebuchet MS, Arial, sans-serif';
 const INSET = 16;
 const CARD = { w: 230, h: 50 } as const;
 const SLOT = tokens.hud.minButtonPx;
+/** Thumb stick: ring and knob radii, the sideways dead zone and the push up that jumps. */
+const STICK_R = 50;
+const STICK_KNOB = 22;
+const STICK_DEAD = 14;
+const STICK_JUMP = 30;
 /**
  * The HUD is laid out for ~1000x520 CSS px and scaled down on smaller screens, but not below
  * this, so 52 px buttons stay at least ~44 CSS px (a fingertip).
@@ -94,8 +99,21 @@ export class HudScene extends Phaser.Scene {
   private images: Phaser.GameObjects.GameObject[] = [];
   private zones: Phaser.GameObjects.Zone[] = [];
   private info!: Phaser.GameObjects.Text;
-  /** Pointers holding a crawl button, by pointer id. Survives HUD rebuilds. */
-  private held = new Map<number, -1 | 1>();
+  /**
+   * The thumb stick (touch screens), bottom right: drag sideways to crawl, push up to jump.
+   * Its graphics live outside the HUD rebuilds, so a drag isn't interrupted by them.
+   */
+  private stickBase!: Phaser.GameObjects.Graphics;
+  private stickKnob!: Phaser.GameObjects.Graphics;
+  private readonly stick = {
+    /** The pointer dragging it, or -1. */
+    id: -1,
+    cx: 0,
+    cy: 0,
+    move: 0 as -1 | 0 | 1,
+    /** A push up jumps once; it re-arms when the knob comes back down. */
+    jumpArmed: true,
+  };
   private touch = false;
   /** The banner on screen, so a rebuild during the same intro doesn't replay its entrance. */
   private bannerText: string | null = null;
@@ -111,12 +129,18 @@ export class HudScene extends Phaser.Scene {
     this.touch =
       this.sys.game.device.input.touch ||
       new URLSearchParams(window.location.search).get('touch') === '1';
-    // Two fingers: one holds a crawl button while the other aims.
+    // Two fingers: one on the stick while the other aims.
     this.input.addPointer(2);
+    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (p.id === this.stick.id) this.dragStick(p);
+    });
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
-      this.release(p.id);
+      if (p.id === this.stick.id) this.releaseStick();
     });
     this.g = this.add.graphics();
+    this.stickBase = this.add.graphics().setVisible(false);
+    this.stickKnob = this.add.graphics().setVisible(false);
+    this.drawStick();
     this.info = this.add.text(0, 0, '', {
       fontFamily: 'monospace',
       fontSize: '12px',
@@ -182,7 +206,10 @@ export class HudScene extends Phaser.Scene {
     this.info.setVisible(SHOW_DEBUG);
     this.info.setPosition(W / 2 - this.info.width / 2, Hh - 4 - this.info.height);
     const state = this.registry.get(HUD_STATE) as HudState | undefined;
-    if (!state || state.menu) return;
+    if (!state || state.menu) {
+      this.placeStick(0, 0, false);
+      return;
+    }
     const g = this.g;
 
     // Team cards.
@@ -248,7 +275,7 @@ export class HudScene extends Phaser.Scene {
     if (state.hide !== null) {
       this.shellButton(INSET + 24 + state.weapons.length * (SLOT + 10) + 14, Hh, state.hide);
     }
-    if (this.touch && state.winner === null) this.controls(W, Hh);
+    this.placeStick(W, Hh, this.touch && state.winner === null);
     this.overviewButton(W, state.overview);
     if (state.winner !== null) this.victory(W, Hh, state);
     if (state.banner) this.banner(W, Hh, state.banner);
@@ -323,14 +350,81 @@ export class HudScene extends Phaser.Scene {
     });
   }
 
-  private emitMove(): void {
-    const dirs = [...this.held.values()];
-    const move = dirs.length === 0 ? 0 : (dirs[dirs.length - 1] ?? 0);
-    this.game.events.emit(HUD_MOVE, move);
+  /** Draws the stick once: a ring with ← → ↑ hints, and the knob. */
+  private drawStick(): void {
+    const b = this.stickBase;
+    b.fillStyle(PANEL, 0.5).fillCircle(0, 0, STICK_R);
+    b.lineStyle(2.5, ACCENT, 0.85).strokeCircle(0, 0, STICK_R);
+    b.fillStyle(0xffffff, 0.75);
+    b.fillTriangle(-STICK_R + 8, 0, -STICK_R + 18, -8, -STICK_R + 18, 8);
+    b.fillTriangle(STICK_R - 8, 0, STICK_R - 18, -8, STICK_R - 18, 8);
+    b.fillTriangle(0, -STICK_R + 8, -8, -STICK_R + 18, 8, -STICK_R + 18);
+    const k = this.stickKnob;
+    k.fillStyle(ACCENT, 1).fillCircle(0, 0, STICK_KNOB);
+    k.lineStyle(2.5, OUTLINE, 1).strokeCircle(0, 0, STICK_KNOB);
   }
 
-  private release(pointerId: number): void {
-    if (this.held.delete(pointerId)) this.emitMove();
+  /** Puts the stick bottom right (or hides it) and its touch area over it. */
+  private placeStick(W: number, Hh: number, show: boolean): void {
+    this.stickBase.setVisible(show);
+    this.stickKnob.setVisible(show);
+    if (!show) {
+      if (this.stick.id >= 0) this.releaseStick();
+      return;
+    }
+    const s = this.stick;
+    s.cx = W - INSET - 24 - STICK_R;
+    s.cy = Hh - INSET - 24 - STICK_R;
+    this.stickBase.setPosition(s.cx, s.cy);
+    if (s.id < 0) this.stickKnob.setPosition(s.cx, s.cy);
+    // A touch area a bit bigger than the ring, so a thumb finds it.
+    const r = STICK_R + 26;
+    const zone = this.add
+      .zone(s.cx - r, s.cy - r, 2 * r, 2 * r)
+      .setOrigin(0, 0)
+      .setInteractive();
+    zone.on('pointerdown', (p: Phaser.Input.Pointer, _x: number, _y: number, e: StoppableEvent) => {
+      e.stopPropagation();
+      s.id = p.id;
+      this.dragStick(p);
+    });
+    this.zones.push(zone);
+  }
+
+  /** Moves the knob with the finger: sideways past a dead zone crawls, up past a mark jumps. */
+  private dragStick(p: Phaser.Input.Pointer): void {
+    const s = this.stick;
+    const pt = this.cameras.main.getWorldPoint(p.x, p.y);
+    let dx = pt.x - s.cx;
+    let dy = pt.y - s.cy;
+    const len = Math.hypot(dx, dy);
+    if (len > STICK_R) {
+      dx *= STICK_R / len;
+      dy *= STICK_R / len;
+    }
+    this.stickKnob.setPosition(s.cx + dx, s.cy + dy);
+    const move = dx > STICK_DEAD ? 1 : dx < -STICK_DEAD ? -1 : 0;
+    if (move !== s.move) {
+      s.move = move;
+      this.game.events.emit(HUD_MOVE, move);
+    }
+    if (dy < -STICK_JUMP && s.jumpArmed) {
+      s.jumpArmed = false;
+      this.game.events.emit(HUD_JUMP);
+    } else if (dy > -STICK_JUMP / 2) {
+      s.jumpArmed = true;
+    }
+  }
+
+  private releaseStick(): void {
+    const s = this.stick;
+    s.id = -1;
+    s.jumpArmed = true;
+    this.stickKnob.setPosition(s.cx, s.cy);
+    if (s.move !== 0) {
+      s.move = 0;
+      this.game.events.emit(HUD_MOVE, 0);
+    }
   }
 
   /** A round 52 px button with an icon; returns its hit zone. */
@@ -346,42 +440,6 @@ export class HudScene extends Phaser.Scene {
     const zone = this.add.zone(x, y, SLOT, SLOT).setOrigin(0, 0).setInteractive();
     this.zones.push(zone);
     return zone;
-  }
-
-  /** Crawl ←/→ (hold) bottom right, jump (tap) above them (ART_SPEC.md, HUD). */
-  private controls(W: number, Hh: number): void {
-    const y = Hh - INSET - 24 - SLOT;
-    const right = W - INSET - 24 - SLOT;
-    const left = right - SLOT - 14;
-    const arrow = (dir: -1 | 1) => (g: Phaser.GameObjects.Graphics, cx: number, cy: number) => {
-      g.fillStyle(0xffffff, 1);
-      g.fillTriangle(cx + dir * 11, cy, cx - dir * 7, cy - 11, cx - dir * 7, cy + 11);
-    };
-    for (const [x, dir] of [
-      [left, -1],
-      [right, 1],
-    ] as const) {
-      this.button(x, y, arrow(dir)).on(
-        'pointerdown',
-        (p: Phaser.Input.Pointer, _x: number, _y: number, e: StoppableEvent) => {
-          e.stopPropagation();
-          this.held.set(p.id, dir);
-          this.emitMove();
-        },
-      );
-    }
-    const jump = this.button((left + right) / 2, y - SLOT - 14, (g, cx, cy) => {
-      g.fillStyle(0xffffff, 1);
-      g.fillTriangle(cx, cy - 12, cx - 11, cy + 2, cx + 11, cy + 2);
-      g.fillRect(cx - 4, cy + 1, 8, 10);
-    });
-    jump.on(
-      'pointerdown',
-      (_p: Phaser.Input.Pointer, _x: number, _y: number, e: StoppableEvent) => {
-        e.stopPropagation();
-        this.game.events.emit(HUD_JUMP);
-      },
-    );
   }
 
   /** A rounded button with a label; `onTap` runs on press (without aiming in the world). */
