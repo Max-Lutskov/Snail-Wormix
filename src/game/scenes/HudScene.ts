@@ -125,6 +125,8 @@ export class HudScene extends Phaser.Scene {
     jumpArmed: true,
   };
   private touch = false;
+  /** ?touch=1: the touch controls on, and driven by the mouse too (for testing on a PC). */
+  private forceTouch = false;
   /** The banner on screen, so a rebuild during the same intro doesn't replay its entrance. */
   private bannerText: string | null = null;
   /** Shows "Скопійовано" on the copy button for a moment. */
@@ -136,9 +138,23 @@ export class HudScene extends Phaser.Scene {
 
   create(): void {
     // On-screen controls on touch devices, or with ?touch=1 to try them with a mouse.
-    this.touch =
-      this.sys.game.device.input.touch ||
-      new URLSearchParams(window.location.search).get('touch') === '1';
+    // Touch controls follow the input in use: shown while fingers play, gone while a mouse
+    // does (a laptop with a touch screen switches as you go). The switch happens on the press,
+    // in the capture phase, before Phaser hit-tests it: an interactive HUD zone would otherwise
+    // swallow a mouse press meant for the slingshot.
+    this.forceTouch = new URLSearchParams(window.location.search).get('touch') === '1';
+    this.touch = this.forceTouch || window.matchMedia('(pointer: coarse)').matches;
+    window.addEventListener(
+      'pointerdown',
+      (e: PointerEvent) => {
+        const touch = this.forceTouch || e.pointerType !== 'mouse';
+        if (touch !== this.touch) {
+          this.touch = touch;
+          this.layout();
+        }
+      },
+      { capture: true },
+    );
     // Two fingers: one on the stick while the other aims.
     this.input.addPointer(2);
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
@@ -428,6 +444,8 @@ export class HudScene extends Phaser.Scene {
       .setOrigin(0, 0)
       .setInteractive();
     zone.on('pointerdown', (p: Phaser.Input.Pointer, _x: number, _y: number, e: StoppableEvent) => {
+      // A mouse click here is aiming, not the stick: let it through to the slingshot.
+      if (!p.wasTouch && !this.forceTouch) return;
       e.stopPropagation();
       s.id = p.id;
       // Centre the stick under the finger, keeping the whole ring on screen.
