@@ -3,12 +3,15 @@
  * player's own music. Effects are layered (a sharp attack, a body, a tail), vary in pitch every
  * time, pan with their place on screen, and duck the music for a moment on big hits.
  *
- * Music: the player picks a file on their device ("Своя музика" in the menu). It is kept in
- * the browser's own storage on that device and never uploaded anywhere, so a track the player
- * owns plays for them only.
+ * Music: the game's own, synthesized and adaptive (music.ts). Or the player picks a file on
+ * their device ("Своя музика" in the menu): it is kept in the browser's own storage on that
+ * device and never uploaded anywhere, so a track the player owns plays for them only, and
+ * replaces the game's music.
  *
  * Browsers start audio muted until the first tap or key; unlock() runs on that gesture.
  */
+
+import { SynthMusic, type MusicMood } from './music';
 
 const MUTE_KEY = 'snail-artillery:muted';
 const DB_NAME = 'snail-artillery';
@@ -50,6 +53,7 @@ export class Audio {
   private noise!: AudioBuffer;
   private music: HTMLAudioElement | null = null;
   private musicNode: MediaElementAudioSourceNode | null = null;
+  private synth: SynthMusic | null = null;
   private muted: boolean;
   /** Name of the player's track, if one is stored. */
   trackName: string | null = null;
@@ -92,6 +96,7 @@ export class Audio {
       this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
       const data = this.noise.getChannelData(0);
       for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+      this.synth = new SynthMusic(ctx, this.musicGain, this.noise);
     }
     void this.ctx.resume();
     this.playMusic();
@@ -120,6 +125,21 @@ export class Audio {
     this.useTrack(file, file.name);
   }
 
+  /** Forgets the player's track and goes back to the game's own music. */
+  async clearTrack(): Promise<void> {
+    try {
+      await idb('readwrite', (s) => s.delete('track'));
+    } catch {
+      // Nothing stored.
+    }
+    this.music?.pause();
+    this.musicNode?.disconnect();
+    this.musicNode = null;
+    this.music = null;
+    this.trackName = null;
+    this.playMusic();
+  }
+
   private async loadTrack(): Promise<void> {
     try {
       const blob = await idb<unknown>('readonly', (s) => s.get('track'));
@@ -141,10 +161,20 @@ export class Audio {
     if (this.ctx) this.playMusic();
   }
 
+  /** The game's adaptive music follows the match (ignored while the player's track plays). */
+  setMood(mood: MusicMood): void {
+    this.synth?.setMood(mood);
+  }
+
   private playMusic(): void {
     const ctx = this.ctx;
     const el = this.music;
-    if (!ctx || !el) return;
+    if (!ctx) return;
+    if (!el) {
+      this.synth?.start();
+      return;
+    }
+    this.synth?.stop();
     if (!this.musicNode) {
       this.musicNode = ctx.createMediaElementSource(el);
       this.musicNode.connect(this.musicGain);

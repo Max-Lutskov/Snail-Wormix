@@ -138,6 +138,8 @@ export class MatchScene extends Phaser.Scene {
   /** Discrete inputs wait here until the next tick consumes them. */
   private queued: Omit<MatchInput, 'move'> = { jump: false, fire: null, weapon: null, hide: false };
   private hudJson = '';
+  /** The music mood last sent, so it's set only on changes. */
+  private moodKey = '';
   /** An impact the camera lingers on: where, and until when (scene time, ms). */
   private impact: { x: number; y: number; until: number } | null = null;
   /** Where the camera was when the current turn's intro began: it glides from here. */
@@ -324,6 +326,7 @@ export class MatchScene extends Phaser.Scene {
     this.follow();
     this.water.update(time);
     this.publishHud();
+    this.musicMood();
     if (this.online && time - this.infoAt > 1000) {
       this.infoAt = time;
       this.updateInfo();
@@ -545,6 +548,18 @@ export class MatchScene extends Phaser.Scene {
       wind: this.match.wind,
       snails: this.match.snails,
     };
+  }
+
+  /** Sets the adaptive music from the match: calm while aiming, tense in flight, dark when low. */
+  private musicMood(): void {
+    const m = this.match;
+    const intensity =
+      m.phase === 'flight' ? 1 : m.phase === 'retreat' ? 0.55 : m.phase === 'over' ? 0 : 0.2;
+    const danger = m.snails.some((s) => s.alive && s.hp <= 30) ? 1 : 0;
+    const key = `${this.menu.open ? 1 : 0}${intensity}${danger}`;
+    if (key === this.moodKey) return;
+    this.moodKey = key;
+    audio.setMood({ intensity, danger, menu: this.menu.open });
   }
 
   /** Stereo position of world x on screen, -1 (left edge) to 1 (right edge). */

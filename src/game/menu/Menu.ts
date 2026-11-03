@@ -151,7 +151,20 @@ export class Menu {
     music.addEventListener('click', () => {
       input.click();
     });
-    row.append(sound, music, input);
+    const reset = document.createElement('button');
+    reset.className = 'menu-extra';
+    reset.textContent = '↺ Музика гри';
+    reset.hidden = audio.trackName === null;
+    reset.addEventListener('click', () => {
+      void audio.clearTrack().then(() => {
+        music.textContent = musicLabel();
+        reset.hidden = true;
+      });
+    });
+    input.addEventListener('change', () => {
+      reset.hidden = false;
+    });
+    row.append(sound, music, reset, input);
     return row;
   }
 
