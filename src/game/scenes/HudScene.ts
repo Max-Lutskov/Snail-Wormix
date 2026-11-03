@@ -76,7 +76,7 @@ const CARD = { w: 230, h: 50 } as const;
 const SLOT = tokens.hud.minButtonPx;
 /** Thumb stick: ring and knob radii, the sideways dead zone and the push up that jumps. */
 const STICK_R = 50;
-/** Where a touch brings the stick: this share of the screen's width and height, bottom right. */
+/** Where a touch brings the stick: this share of the screen's width and height, bottom left. */
 const STICK_AREA = { w: 0.4, h: 0.55 } as const;
 const STICK_REST_ALPHA = 0.5;
 const STICK_KNOB = 22;
@@ -104,7 +104,7 @@ export class HudScene extends Phaser.Scene {
   private zones: Phaser.GameObjects.Zone[] = [];
   private info!: Phaser.GameObjects.Text;
   /**
-   * The thumb stick (touch screens), bottom right: drag sideways to crawl, push up to jump.
+   * The thumb stick (touch screens), bottom left: drag sideways to crawl, push up to jump.
    * Its graphics live outside the HUD rebuilds, so a drag isn't interrupted by them.
    */
   private stickBase!: Phaser.GameObjects.Graphics;
@@ -115,7 +115,7 @@ export class HudScene extends Phaser.Scene {
     /** The centre it is pulled from: under the finger while dragged, at rest otherwise. */
     cx: 0,
     cy: 0,
-    /** Where it waits (bottom right), and the screen size it may move within. */
+    /** Where it waits (bottom left), and the screen size it may move within. */
     restX: 0,
     restY: 0,
     w: 0,
@@ -256,9 +256,13 @@ export class HudScene extends Phaser.Scene {
       this.wind(W / 2, INSET + 58, state.wind);
     }
 
+    // Ammo slots (and the shell): bottom left, or bottom right on touch screens, where the
+    // stick takes the left thumb.
+    const slotsW = state.weapons.length * (SLOT + 10) - 10 + (state.hide !== null ? SLOT + 14 : 0);
+    const slotsX = this.touch ? W - INSET - 24 - slotsW : INSET + 24;
     // Ammo slots.
     state.weapons.forEach((w, i) => {
-      const x = INSET + 24 + i * (SLOT + 10);
+      const x = slotsX + i * (SLOT + 10);
       const y = Hh - INSET - 24 - SLOT;
       g.fillStyle(PANEL, H.panelOpacity).fillRoundedRect(x, y, SLOT, SLOT, 10);
       g.lineStyle(3, w.selected ? ACCENT : PANEL, 1).strokeRoundedRect(x, y, SLOT, SLOT, 10);
@@ -283,7 +287,7 @@ export class HudScene extends Phaser.Scene {
     });
 
     if (state.hide !== null) {
-      this.shellButton(INSET + 24 + state.weapons.length * (SLOT + 10) + 14, Hh, state.hide);
+      this.shellButton(slotsX + state.weapons.length * (SLOT + 10) + 14, Hh, state.hide);
     }
     this.placeStick(W, Hh, this.touch && state.winner === null);
     this.overviewButton(W, state.overview);
@@ -402,8 +406,8 @@ export class HudScene extends Phaser.Scene {
   }
 
   /**
-   * A floating stick: it waits dimmed in the bottom-right corner, and a touch anywhere in the
-   * lower right of the screen brings it under the thumb, centred where the finger landed (the
+   * A floating stick: it waits dimmed in the bottom-left corner, and a touch anywhere in the
+   * lower left of the screen brings it under the thumb, centred where the finger landed (the
    * slingshot can't start there; aim from anywhere else).
    */
   private placeStick(W: number, Hh: number, show: boolean): void {
@@ -414,13 +418,13 @@ export class HudScene extends Phaser.Scene {
       return;
     }
     const s = this.stick;
-    s.restX = W - INSET - 24 - STICK_R;
+    s.restX = INSET + 24 + STICK_R;
     s.restY = Hh - INSET - 24 - STICK_R;
     s.w = W;
     s.h = Hh;
     if (s.id < 0) this.restStick();
     const zone = this.add
-      .zone(W * (1 - STICK_AREA.w), Hh * (1 - STICK_AREA.h), W * STICK_AREA.w, Hh * STICK_AREA.h)
+      .zone(0, Hh * (1 - STICK_AREA.h), W * STICK_AREA.w, Hh * STICK_AREA.h)
       .setOrigin(0, 0)
       .setInteractive();
     zone.on('pointerdown', (p: Phaser.Input.Pointer, _x: number, _y: number, e: StoppableEvent) => {
