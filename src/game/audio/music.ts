@@ -1,8 +1,9 @@
 /**
  * The game's own music, synthesized live: dark electro with a bouncy bass, 112 BPM, A minor.
  * It adapts to the game: a calm pad in the menu; kick, hats and a side-chained bass while
- * aiming; claps, fast hats, an arpeggio and a brighter bass while a shot flies; a dark pad on
- * top when someone is low on health. Layers cross-fade, so changes are smooth.
+ * aiming; claps, fast hats, a pluck and a brighter bass while a shot flies; and when someone
+ * is low on health, a slow minor melody (with a dotted-eighth echo) over a pad that pumps with
+ * the kick. Layers cross-fade; the melody comes in on the next bar, like a part of the song.
  *
  * Notes are scheduled a little ahead on the audio clock (the usual Web Audio look-ahead), so
  * the beat stays tight even when frames stutter.
@@ -23,6 +24,33 @@ const CHORDS = [
   [53, 57, 60],
   [52, 56, 59],
 ] as const;
+/**
+ * The low-health melody, per bar: [step, MIDI note, length in steps]. A falling minor line
+ * over Am Am F E that leans into the E chord's G sharp and resolves back to the top.
+ */
+const MELODY: readonly (readonly (readonly [number, number, number])[])[] = [
+  [
+    [0, 76, 6],
+    [6, 74, 2],
+    [8, 72, 8],
+  ],
+  [
+    [0, 69, 6],
+    [6, 72, 2],
+    [8, 76, 8],
+  ],
+  [
+    [0, 77, 6],
+    [6, 76, 2],
+    [8, 72, 8],
+  ],
+  [
+    [0, 71, 6],
+    [6, 74, 2],
+    [8, 68, 8],
+  ],
+];
+
 /** Bass pattern over a bar: 0 rest, 1 root, 2 octave up. */
 const BASS = [1, 0, 1, 2, 0, 1, 0, 2, 1, 0, 1, 2, 0, 2, 1, 0] as const;
 
@@ -42,6 +70,11 @@ export class SynthMusic {
   private readonly groove: GainNode;
   private readonly tension: GainNode;
   private readonly pad: GainNode;
+  /** Between the pad and its layer: pumps with the kick, like the bass. */
+  private readonly padPump: GainNode;
+  private readonly melody: GainNode;
+  /** The melody's echo (a dotted eighth), fed back through a low-pass. */
+  private readonly echo: DelayNode;
   private readonly bassFilter: BiquadFilterNode;
   /** Between the bass and the mix: dips on every kick (side-chain pumping). */
   private readonly sidechain: GainNode;
@@ -67,6 +100,20 @@ export class SynthMusic {
     this.groove = layer();
     this.tension = layer();
     this.pad = layer();
+    this.padPump = ctx.createGain();
+    this.padPump.connect(this.pad);
+    this.melody = layer();
+    this.echo = ctx.createDelay(1);
+    this.echo.delayTime.value = STEP * 3;
+    const feedback = ctx.createGain();
+    feedback.gain.value = 0.32;
+    const tone = ctx.createBiquadFilter();
+    tone.type = 'lowpass';
+    tone.frequency.value = 1800;
+    this.echo.connect(tone).connect(feedback).connect(this.echo);
+    const wet = ctx.createGain();
+    wet.gain.value = 0.5;
+    tone.connect(wet).connect(this.melody);
     this.bassFilter = ctx.createBiquadFilter();
     this.bassFilter.type = 'lowpass';
     this.bassFilter.Q.value = 6;
@@ -101,7 +148,14 @@ export class SynthMusic {
     };
     fade(this.groove, mood.menu ? 0.35 : 0.85);
     fade(this.tension, mood.menu ? 0 : mood.intensity, 0.25);
-    fade(this.pad, mood.menu ? 0.6 : mood.danger * 0.5, 0.8);
+    // The low-health parts come in (and go) on the next bar line, not mid-phrase.
+    const bar = this.nextTime + ((16 - (this.step % 16)) % 16) * STEP;
+    const onBar = (g: GainNode, v: number): void => {
+      g.gain.setTargetAtTime(v, Math.max(t, bar), 0.12);
+    };
+    if (mood.menu) fade(this.pad, 0.6, 0.8);
+    else onBar(this.pad, mood.danger * 0.4);
+    onBar(this.melody, mood.menu ? 0 : mood.danger);
     this.bassFilter.frequency.setTargetAtTime(
       mood.menu ? 260 : 380 + mood.intensity * 1100,
       t,
@@ -155,6 +209,12 @@ export class SynthMusic {
     if (s === 0 && (this.mood.menu || this.mood.danger > 0)) {
       for (const n of chord) this.padNote(midi(n - 12), t, STEP * 16);
     }
+    // The low-health melody.
+    if (!this.mood.menu && this.mood.danger > 0) {
+      for (const [at, note, len] of MELODY[bar] ?? []) {
+        if (at === s) this.lead(midi(note), t, len * STEP);
+      }
+    }
   }
 
   private env(g: GainNode, t: number, peak: number, attack: number, decay: number): void {
@@ -172,11 +232,16 @@ export class SynthMusic {
     o.connect(g).connect(this.groove);
     o.start(t);
     o.stop(t + 0.4);
-    // Side-chain: the bass ducks under each kick and swells back, the pumping electro feel.
-    const s = this.sidechain.gain;
-    s.cancelScheduledValues(t);
-    s.setValueAtTime(0.3, t);
-    s.linearRampToValueAtTime(1, t + STEP * 2.5);
+    // Side-chain: the bass and the pad duck under each kick and swell back, the pumping
+    // electro feel that ties them into the beat.
+    for (const [g, low] of [
+      [this.sidechain.gain, 0.3],
+      [this.padPump.gain, 0.45],
+    ] as const) {
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(low, t);
+      g.linearRampToValueAtTime(1, t + STEP * 2.5);
+    }
   }
 
   private hat(t: number, vol: number, out: AudioNode): void {
@@ -243,6 +308,43 @@ export class SynthMusic {
     o.stop(t + STEP * 1.8);
   }
 
+  /** A melody note: soft triangle with a sine an octave up, gentle vibrato, into the echo. */
+  private lead(freq: number, t: number, dur: number): void {
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.13, t + 0.03);
+    g.gain.setValueAtTime(0.11, t + Math.max(0.05, dur - 0.12));
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.15);
+    const f = this.ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = 2600;
+    f.connect(g);
+    g.connect(this.melody);
+    g.connect(this.echo);
+    const vib = this.ctx.createOscillator();
+    vib.frequency.value = 5.5;
+    const depth = this.ctx.createGain();
+    depth.gain.setValueAtTime(0, t);
+    depth.gain.linearRampToValueAtTime(7, t + Math.min(0.3, dur));
+    vib.connect(depth);
+    for (const [wave, mult, vol] of [
+      ['triangle', 1, 1],
+      ['sine', 2, 0.25],
+    ] as const) {
+      const o = this.ctx.createOscillator();
+      o.type = wave;
+      o.frequency.value = freq * mult;
+      depth.connect(o.detune);
+      const v = this.ctx.createGain();
+      v.gain.value = vol;
+      o.connect(v).connect(f);
+      o.start(t);
+      o.stop(t + dur + 0.2);
+    }
+    vib.start(t);
+    vib.stop(t + dur + 0.2);
+  }
+
   private padNote(freq: number, t: number, dur: number): void {
     const f = this.ctx.createBiquadFilter();
     f.type = 'lowpass';
@@ -252,7 +354,7 @@ export class SynthMusic {
     g.gain.exponentialRampToValueAtTime(0.06, t + 0.5);
     g.gain.setValueAtTime(0.06, t + dur - 0.4);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    f.connect(g).connect(this.pad);
+    f.connect(g).connect(this.padPump);
     for (const cents of [-8, 8]) {
       const o = this.ctx.createOscillator();
       o.type = 'sawtooth';
