@@ -555,10 +555,24 @@ export class MatchScene extends Phaser.Scene {
     const m = this.match;
     const intensity = m.phase === 'flight' ? 1 : m.phase === 'retreat' ? 0.45 : 0;
     const danger = m.snails.some((s) => s.alive && s.hp <= 30) ? 1 : 0;
-    const key = `${this.menu.open ? 1 : 0}${intensity}${danger}`;
+    const outcome = this.outcome();
+    const key = `${this.menu.open ? 1 : 0}${intensity}${danger}${outcome ?? ''}`;
     if (key === this.moodKey) return;
     this.moodKey = key;
-    audio.setMood({ intensity, danger, menu: this.menu.open });
+    audio.setMood({ intensity, danger, menu: this.menu.open, outcome });
+  }
+
+  /**
+   * After the match, for the music: did the local player win? Against the bot or online, by
+   * their own team; on one device somebody always wins.
+   */
+  private outcome(): 'win' | 'lose' | null {
+    const m = this.match;
+    if (m.phase !== 'over') return null;
+    if (m.winner === null || m.winner < 0) return 'lose';
+    if (this.online) return m.winner === this.online.seat ? 'win' : 'lose';
+    if (this.bot) return m.winner === BOT_TEAM ? 'lose' : 'win';
+    return 'win';
   }
 
   /** Stereo position of world x on screen, -1 (left edge) to 1 (right edge). */
@@ -635,7 +649,8 @@ export class MatchScene extends Phaser.Scene {
         audio.turn();
         break;
       case 'over':
-        if (e.winner >= 0) audio.win();
+        if (this.outcome() === 'win') audio.win();
+        else audio.lose();
         break;
       default:
         break;

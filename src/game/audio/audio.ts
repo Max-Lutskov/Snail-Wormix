@@ -368,6 +368,17 @@ export class Audio {
     });
   }
 
+  /** Defeat: a sad falling 'wah-wah'. */
+  lose(): void {
+    const v = this.voice(0, 0.5);
+    if (!v) return;
+    [392, 370, 349, 294].forEach((f, i) => {
+      const last = i === 3;
+      this.tone(v.out, 'sawtooth', f, last ? f * 0.94 : f, last ? 0.7 : 0.26, 0.16, i * 0.28);
+      this.tone(v.out, 'triangle', f, last ? f * 0.94 : f, last ? 0.7 : 0.26, 0.25, i * 0.28);
+    });
+  }
+
   /** Taps on buttons. */
   click(): void {
     const v = this.voice(0, 0.3);
