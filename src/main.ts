@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { audio } from './game/audio/audio';
 import { createGameConfig, watchResize } from './game/config';
+import { canFullscreen, enterFullscreen, isFullscreen, isStandalone } from './game/fullscreen';
 
 const parent = document.getElementById('game');
 if (!parent) throw new Error('main: #game element is missing');
@@ -22,17 +23,11 @@ for (const type of ['pointerdown', 'keydown'] as const) {
 
 // Phones: the first tap goes fullscreen (landscape where the browser allows locking it), so
 // the browser's bars don't eat the screen. Needs a user gesture, hence the DOM listener.
-if (window.matchMedia('(pointer: coarse)').matches && document.fullscreenEnabled) {
+if (window.matchMedia('(pointer: coarse)').matches && canFullscreen() && !isStandalone()) {
   window.addEventListener(
     'pointerup',
     () => {
-      if (document.fullscreenElement) return;
-      document.documentElement
-        .requestFullscreen({ navigationUI: 'hide' })
-        .then(() =>
-          (screen.orientation as { lock?: (o: string) => Promise<void> }).lock?.('landscape'),
-        )
-        .catch(() => undefined);
+      if (!isFullscreen()) enterFullscreen();
     },
     { once: true },
   );

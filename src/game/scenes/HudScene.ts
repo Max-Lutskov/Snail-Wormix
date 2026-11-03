@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import type { WeaponId } from '../../core/weapons';
 import { hexToInt, tokens } from '../art/tokens';
 import { audio } from '../audio/audio';
+import { isFullscreen, isStandalone, toggleFullscreen } from '../fullscreen';
 import { renderSize, devicePixelRatio } from '../display';
 
 /** Registry key MatchScene writes its debug line to. */
@@ -193,6 +194,11 @@ export class HudScene extends Phaser.Scene {
     };
     fit();
     this.scale.on(Phaser.Scale.Events.RESIZE, fit);
+    for (const type of ['fullscreenchange', 'webkitfullscreenchange']) {
+      document.addEventListener(type, () => {
+        this.layout();
+      });
+    }
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.scale.off(Phaser.Scale.Events.RESIZE, fit);
     });
@@ -229,9 +235,14 @@ export class HudScene extends Phaser.Scene {
     this.images = [];
     this.zones = [];
 
+    // Lay out inside the safe area (notch, Dynamic Island, home bar): the camera shifts past
+    // the left and top insets, and W, Hh are what's left.
     const scale = this.cssScale() * this.uiScale();
-    const W = this.scale.width / scale;
-    const Hh = this.scale.height / scale;
+    const safe = safeInsets();
+    const u = this.uiScale();
+    this.cameras.main.setScroll(-safe.left / u, -safe.top / u);
+    const W = this.scale.width / scale - (safe.left + safe.right) / u;
+    const Hh = this.scale.height / scale - (safe.top + safe.bottom) / u;
     this.info.setVisible(SHOW_DEBUG);
     this.info.setPosition(W / 2 - this.info.width / 2, Hh - 4 - this.info.height);
     const state = this.registry.get(HUD_STATE) as HudState | undefined;
@@ -311,6 +322,7 @@ export class HudScene extends Phaser.Scene {
     this.placeStick(W, Hh, this.touch && state.winner === null);
     this.overviewButton(W, state.overview);
     this.muteButton(W);
+    if (!isStandalone()) this.fullscreenButton(W);
     if (state.winner !== null) this.victory(W, Hh, state);
     if (state.banner) this.banner(W, Hh, state.banner);
     else this.bannerText = null;
@@ -392,6 +404,34 @@ export class HudScene extends Phaser.Scene {
       e.stopPropagation();
       audio.setMuted(!audio.isMuted);
       this.layout();
+    });
+  }
+
+  /** Under the sound button: fullscreen on and off (on iPhone, how to get there). */
+  private fullscreenButton(W: number): void {
+    const x = W - INSET - SLOT;
+    const y = INSET + CARD.h + 10 + 2 * (SLOT + 10);
+    const full = isFullscreen();
+    this.button(x, y, (g, cx, cy) => {
+      // Four corners pointing out (in when already fullscreen).
+      g.lineStyle(3, 0xffffff, 1);
+      const a = 11;
+      const b = 5;
+      for (const [sx, sy] of [
+        [-1, -1],
+        [1, -1],
+        [-1, 1],
+        [1, 1],
+      ] as const) {
+        const ox = cx + sx * (full ? b : a);
+        const oy = cy + sy * (full ? b : a);
+        const d = full ? 6 : -6;
+        g.lineBetween(ox, oy, ox + sx * d, oy);
+        g.lineBetween(ox, oy, ox, oy + sy * d);
+      }
+    }).on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: StoppableEvent) => {
+      e.stopPropagation();
+      toggleFullscreen();
     });
   }
 
@@ -672,4 +712,25 @@ export class HudScene extends Phaser.Scene {
       140,
     );
   }
+}
+
+let safeProbe: HTMLDivElement | null = null;
+
+/** The screen's safe-area insets (CSS px): notch or Dynamic Island, rounded corners, home bar. */
+function safeInsets(): { left: number; right: number; top: number; bottom: number } {
+  if (!safeProbe) {
+    safeProbe = document.createElement('div');
+    safeProbe.style.cssText =
+      'position:fixed;visibility:hidden;pointer-events:none;' +
+      'padding:env(safe-area-inset-top) env(safe-area-inset-right) ' +
+      'env(safe-area-inset-bottom) env(safe-area-inset-left);';
+    document.body.append(safeProbe);
+  }
+  const s = getComputedStyle(safeProbe);
+  return {
+    left: parseFloat(s.paddingLeft) || 0,
+    right: parseFloat(s.paddingRight) || 0,
+    top: parseFloat(s.paddingTop) || 0,
+    bottom: parseFloat(s.paddingBottom) || 0,
+  };
 }
